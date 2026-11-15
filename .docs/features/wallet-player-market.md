@@ -13,10 +13,14 @@ instances stopped during conversion; V50 projections become historical archives.
 
 ## Player interaction
 
+The connected **Menu** key and expired-stock **Gerenciar** actions open their
+context menus at the current screen cursor. Native context-menu animation and
+screen-edge handling remain in effect. See the [cursor placement hotfix](../hotfixes/wallet-context-menu-cursor.md).
+
 Open the existing wallet radio, power its two-way device, then press
 **Sintonizar**. The player calls the Rede do Mercado with their deterministic
 sector. Static plays while tuning; after the server validates the radio, a short
-handshake finishes and the operator acknowledges. The operator's animated
+handshake finishes and the operator acknowledges. The operator's snapshot
 portrait appears in the radio display. This contact is a presentation of the
 player market; it contributes no NPC stock. [Operator contacts and gossip](wallet-market-operators.md)
 select SPARKS or IRON ECHO on the server, retain the assignment for ten minutes

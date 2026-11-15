@@ -65,7 +65,7 @@ function Panel.action(win)
     local row=selected(win)
     if not row then return end
     if s.mode=='expired' then
-        local menu=ISContextMenu.get(win.playerIndex,win:getX(),win:getY())
+        local menu=ISContextMenu.get(win.playerIndex,getMouseX(),getMouseY())
         menu:addOption(getText('UI_ApocWallet_MarketRecover'),s,function() Client.manage(s,row,'MarketRecover') end)
         menu:addOption(getText('UI_ApocWallet_MarketRepost'),s,function() Client.manage(s,row,'MarketRepost') end)
         return
@@ -80,7 +80,7 @@ function Panel.menu(win)
     local s=win.marketSession
     if s.state~='connected' then win:nextSkin(); return end
     if s.pending or s.transaction then return end
-    local menu=ISContextMenu.get(win.playerIndex,win:getX(),win:getY())
+    local menu=ISContextMenu.get(win.playerIndex,getMouseX(),getMouseY())
     for _,entry in ipairs({{'market','UI_ApocWallet_MarketBrowse'},{'inventory','UI_ApocWallet_MarketInventory'},{'expired','UI_ApocWallet_MarketExpired'}}) do
         local mode=entry[1]
         menu:addOption(getText(entry[2]),s,function() Client.page(s,mode,1) end)

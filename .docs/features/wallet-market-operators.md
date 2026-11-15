@@ -3,8 +3,8 @@
 Status — implemented, awaiting B42 dedicated-server/client validation.
 
 SPARKS (`sparks`, male) uses the sixteen `control_00.png` through
-`control_15.png` frames. IRON ECHO (`iron_echo`, female) uses the corresponding
-`ironcontrol_` frames. Both are eligible for uniform random selection and provide
+`control_15.png` snapshots. IRON ECHO (`iron_echo`, female) uses the corresponding
+`ironcontrol_` snapshots. Both are eligible for uniform random selection and provide
 cosmetic identity and dialogue. Their personality is expressed by their PTBR text.
 
 ## Contact lifecycle
@@ -28,7 +28,24 @@ longer-lived operator assignment.
 `OperatorRules.lua` is the extension point for server rules. Register definitions
 through `Operators.register` with `key`, `name`, `gender`, `texturePrefix` and
 `randomEligible`. Names and gender are presentation metadata. Portrait prefixes
-identify sixteen zero-padded PNG files under `media/textures/ApocWallet/operator`.
+identify up to sixteen zero-padded PNG files (`00` through `15`) under
+`media/textures/ApocWallet/operator`. One image is sufficient; missing numbers
+are skipped. Images can be independent poses rather than animation frames.
+
+Each radio window starts with the first available snapshot and holds it for at
+least five seconds. Once the hold expires, operator speech advances to the next
+available snapshot in numeric order, wrapping at the end. Silence retains the
+current image, so short replies do not trigger rapid cycling or snap back to
+the first pose. A long render gap advances at most one image, with a fresh
+five-second hold. Changing operators or leaving the connected state resets the
+sequence. Texture caching and the existing radio scan-line effect remain.
+
+Snapshot verification (2026-11-15):
+`npm exec --yes --package=fengari-node-cli -- fengari tests/wallet-operator-portrait.lua`
+passed 15 checks covering timing boundaries, silence, reply progression, sparse
+and single-image sets, wraparound, long gaps, caching, independent windows,
+operator changes, missing assets and reconnects. The market-client harness also
+passes 46 checks. These tests mock rendering; visual pacing awaits in-game validation.
 
 ```lua
 local Operators=require 'ApocWallet/OperatorRules'

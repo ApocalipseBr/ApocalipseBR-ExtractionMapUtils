@@ -13,7 +13,7 @@ integration. Repository conventions live in [AGENTS.md](../AGENTS.md).
 
 - [Player market and radio operator](features/wallet-player-market.md): tune-in, PTBR coded speech, operator portrait/audio, player listings, exact-item delivery and seller-credit contract.
 
-- [Market operators and server gossip](features/wallet-market-operators.md): SPARKS/IRON ECHO, retained ten-minute contacts, server rule registration, coded bulletins and database-loaded PTBR response pools.
+- [Market operators and server gossip](features/wallet-market-operators.md): SPARKS/IRON ECHO, slow portrait snapshots, retained ten-minute contacts, server rule registration, coded bulletins and database-loaded PTBR response pools.
 
 - [Wallet courier pickup and delivery](features/wallet-courier-delivery.md): ported drone visuals, batched immediate inventory pickup, persistent offline delivery and the proposed backend debit contract.
 
@@ -71,6 +71,8 @@ Future event activation and database integration should receive their own featur
 documents when designed. Mark proposals as planned until implemented.
 
 ## Hotfixes
+
+- [Wallet context menus at the cursor](hotfixes/wallet-context-menu-cursor.md): radio Menu and expired-stock actions open at the current cursor.
 
 - [Wallet record mutations](hotfixes/wallet-record-mutations.md): targeted atomic persistence and zero SQL writes for unchanged payment admission retries.
 

@@ -125,8 +125,12 @@ function win.list:clear() self.items={} end
 function win.list:addItem(name,row) self.items[#self.items+1]={item=row} end
 for _,method in ipairs({'drawText','drawTextCentre','drawRect','drawTextureScaled'}) do win[method]=function() end end
 win.actions={refresh=function() end}
-local menuOptions
-ISContextMenu={get=function()
+local menuOptions,menuPosition
+local mouseX,mouseY=1250,740
+function getMouseX() return mouseX end
+function getMouseY() return mouseY end
+ISContextMenu={get=function(index,x,y)
+    menuPosition={playerIndex=index,x=x,y=y}
     menuOptions={}
     return {addOption=function(_,label,target,fn) menuOptions[#menuOptions+1]={label=label,target=target,fn=fn} end}
 end}
@@ -152,6 +156,8 @@ check(textures==32 and texturePaths['media/textures/ApocWallet/operator/control_
 s.pending=nil; s.transaction=nil; s.nextNavigation=0
 Panel.menu(win)
 check(#menuOptions==5,'menu offers market, inventory, expired stock, search and clear')
+check(menuPosition.playerIndex==win.playerIndex and menuPosition.x==mouseX and menuPosition.y==mouseY,
+    'menu opens at screen cursor instead of radio window corner')
 menuOptions[4].fn()
 modal.value='aXe'
 modal.callback(win,{internal='OK',parent=modal})
@@ -160,8 +166,11 @@ Client.receive({onlineId=7,token=s.pending.token,ok=true,kind='page',mode='expir
 time=time+500; Client.page(s,'expired',2)
 check(s.pending.args.query=='aXe','filter preserved across page navigation')
 s.pending=nil; s.mode='expired'; s.rows={row}; Panel.populate(win)
+mouseX,mouseY=1870,1030
 Panel.action(win)
 check(#menuOptions==2,'expired item offers recovery and repost')
+check(menuPosition.playerIndex==win.playerIndex and menuPosition.x==mouseX and menuPosition.y==mouseY,
+    'expired actions use current cursor position after mouse moves')
 menuOptions[2].fn()
 check(s.pending.command=='MarketRepost' and s.pending.args.listingId==row.id,'repost uses authoritative listing id')
 local retryToken=s.pending.token
