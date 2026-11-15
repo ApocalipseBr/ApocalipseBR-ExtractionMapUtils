@@ -16,8 +16,8 @@ end
 UIFont={Small=1}
 local measures=0
 function getTextManager() return {MeasureStringX=function(_,_,text) measures=measures+1; return #text*6 end} end
-local textures=0
-function getTexture(path) textures=textures+1; return {path=path} end
+local textures,texturePaths=0,{}
+function getTexture(path) textures=textures+1; texturePaths[path]=true; return {path=path} end
 function sendClientCommand(player,module,command,args) packets[#packets+1]={player=player,command=command,args=args} end
 local inv={}; function inv:getOutermostContainer() return self end
 local radio={item=true,getContainer=function() return inv end,getID=function() return 99 end}
@@ -36,17 +36,21 @@ check(packets[1].args.radio.itemId==99,'native device locator sent')
 check(sounds[1]=='ApocWallet_Static','ported static while tuning')
 Client.receive({onlineId=8,token=s.pending.token,ok=true,kind='page',mode='market',page=1,pages=2,rows={}})
 check(s.state=='tuning' and not s.deferred,'other local player packet ignored')
-Client.receive({onlineId=7,token=s.pending.token,ok=true,kind='page',mode='market',page=1,pages=2,rows={}})
+local iron={key='iron_echo',name='IRON ECHO',gender='female',texturePrefix='ironcontrol_'}
+Client.receive({onlineId=7,token=s.pending.token,ok=true,kind='page',mode='market',page=1,pages=2,rows={},
+    operator=iron,gossip='Aqui IRON ECHO. Boletim MER-001 autorizado.'})
 Client.update()
 check(s.state=='tuning' and #said==1 and said[1]:find('S012%-034%-N0'),'deterministic sector spoken while tuning')
 time=time+1800; Client.update()
 check(s.state=='connected' and stops[1],'tune waits for handshake and stops static')
 time=time+1400; Client.update()
-check(#heard==1 and heard[1]:find('MarketTuneRx',1,true),'operator response emitted through native radio')
+check(#heard==1 and heard[1]=='Aqui IRON ECHO. Boletim MER-001 autorizado.','server-selected text emitted verbatim through native radio')
+check(s.operator==iron and s.dialogue.history[#s.dialogue.history].name=='IRON ECHO','operator identity accompanies transcript lines')
 local dialogue=s.dialogue
 local before=#dialogue.queue
 Client.page(s,'market',2)
 check(#dialogue.queue==before+1,'page request speaks only the player until a reply arrives')
+check(dialogue.queue[#dialogue.queue].args[1]=='IRON ECHO' and dialogue.queue[#dialogue.queue].args[2]=='MER-002','player requests address operator and coded bulletin')
 local firstToken=s.pending.token
 Client.receive({onlineId=7,token=firstToken,ok=true,kind='page',mode='market',page=2,pages=2,rows={}})
 check(#dialogue.queue==before+2,'operator acknowledges the successful page response')
@@ -139,6 +143,12 @@ local beforeMeasure=measures
 Panel.render(win); Panel.render(win)
 check(measures==beforeMeasure,'market render performs no text measurement or network work')
 check(textures==16,'ported operator frames cached once')
+check(texturePaths['media/textures/ApocWallet/operator/ironcontrol_00.png'] and texturePaths['media/textures/ApocWallet/operator/ironcontrol_15.png'],'selected female portrait uses the full ironcontrol sequence')
+check(win.marketOperatorDisplay=='IRON ECHO','operator name replaces generic display label')
+local Portrait=require 'ApocWallet/OperatorPortrait'
+Portrait.draw(win,0,0,50,60,'connected',0,{texturePrefix='control_'})
+Portrait.draw(win,0,0,50,60,'connected',0,iron)
+check(textures==32 and texturePaths['media/textures/ApocWallet/operator/control_00.png'],'portrait caches both operators independently')
 s.pending=nil; s.transaction=nil; s.nextNavigation=0
 Panel.menu(win)
 check(#menuOptions==5,'menu offers market, inventory, expired stock, search and clear')
@@ -161,6 +171,7 @@ Client.receive({onlineId=7,token=retryToken,ok=true,kind='reposted'})
 check(s.needsRefresh,'repost acknowledgment refreshes stock')
 s.pending=nil; s.needsRefresh=nil; Panel.action(win); menuOptions[1].fn()
 check(s.pending.command=='MarketRecover','recovery option requests courier return')
+check(s.dialogue.queue[#s.dialogue.queue].args[2]==row.code and s.dialogue.queue[#s.dialogue.queue].args[3]:find('EXP%-001'),'expired management transmits cargo and coded page')
 for i=1,30 do s.dialogue:record(i%2==0 and 'operator' or 'player','long message '..i..string.rep(' cargo',20)) end
 check(#s.dialogue.history>12 and #win.marketChat.items>30,'transcript preserves all session exchanges and wraps long lines')
 check(win.marketChat.scroll<0,'transcript follows latest messages')

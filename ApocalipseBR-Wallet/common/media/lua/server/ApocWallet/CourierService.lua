@@ -69,9 +69,11 @@ function Service.notify(user, job)
     for i=0,list:size()-1 do
         local player=list:get(i)
         if player:getUsername()==user then
-            sendServerCommand(player,'ApocWallet','CourierETA',{id=job.id,kind=job.kind,
+            local message={id=job.id,kind=job.kind,
                 onlineId=player:getOnlineID(),
-                seconds=math.max(0,math.ceil((job.due-now())/1000))})
+                seconds=math.max(0,math.ceil((job.due-now())/1000))}
+            if ApocWallet.MarketService then ApocWallet.MarketService.courierGossip(player,message) end
+            sendServerCommand(player,'ApocWallet','CourierETA',message)
         end
     end
 end

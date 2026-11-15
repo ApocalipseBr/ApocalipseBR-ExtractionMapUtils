@@ -14,11 +14,15 @@ instances stopped during conversion; V50 projections become historical archives.
 ## Player interaction
 
 Open the existing wallet radio, power its two-way device, then press
-**Sintonizar**. The player calls Controle do Mercado with their deterministic
+**Sintonizar**. The player calls the Rede do Mercado with their deterministic
 sector. Static plays while tuning; after the server validates the radio, a short
 handshake finishes and the operator acknowledges. The operator's animated
 portrait appears in the radio display. This contact is a presentation of the
-player market; it contributes no NPC stock.
+player market; it contributes no NPC stock. [Operator contacts and gossip](wallet-market-operators.md)
+select SPARKS or IRON ECHO on the server, retain the assignment for ten minutes
+of market inactivity across closing/reconnects, and transmit rendered PTBR lines
+from startup-loaded database pools. The operator name appears in the display
+and transcript. Server restart clears the in-memory contact assignments.
 
 The six physical keys, in their existing skin positions:
 
@@ -53,8 +57,11 @@ position when reading older messages. Resizing/skin layout rewraps the transcrip
 closing the session releases its history. The two-line log strip and native
 player/radio text remain available. Drone manifests use their own three-second
 spacing, as described in the [courier guide](wallet-courier-delivery.md). All captions, dialogs,
-and protocol speech use PTBR keys; the existing Brazilian-Portuguese fallback
-policy remains in both EN and PTBR catalogs.
+and player request speech use PTBR keys with matching EN/PTBR fallback catalogs.
+Operator responses are selected and rendered on the server from PTBR gossip
+pools. Page references encode the view with MER, EXP or MOC followed by the
+zero-padded page number, such as MER-003. Item requests retain cargo and sector
+references and now also identify the current coded bulletin.
 
 Cargo code: `CARGA-` plus a five-digit hash of the full item type, rolling
 `n=(n*31+byte)%100000`. Sector: `Sxxx-yyy-Nz`, using 100-tile grid coordinates and
@@ -63,11 +70,10 @@ listing and transaction identifiers remain authoritative server values.
 
 Examples (with the translated values substituted at runtime):
 
-> Controle, registrar CARGA-01234, 2 unidades, setor S012-034-N0.
+> SPARKS, registrar CARGA-01234, 2 unidades, referência MOC-001, setor S012-034-N0.
 > Solicito coleta. Câmbio.
 
-> Roger. CARGA-01234, 2 unidades sob custódia. Registro confirmado;
-> agrupando coleta. Câmbio.
+> Fechado! CARGA-01234, 2 unidades registradas. Coleta agrupada, referência MOC-001.
 
 ## Ownership and trade lifecycle
 

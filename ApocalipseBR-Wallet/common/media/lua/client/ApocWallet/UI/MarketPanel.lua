@@ -6,7 +6,8 @@ local Client=require 'ApocWallet/MarketClient'
 local Portrait=require 'ApocWallet/OperatorPortrait'
 local P=require 'ApocWallet/MarketProtocol'
 local Panel={}
-local function speakerName(speaker)
+local function speakerName(speaker,name)
+    if name then return name end
     return getText(speaker=='operator' and 'UI_ApocWallet_MarketOperator' or
         speaker=='drone' and 'UI_ApocWallet_CourierDrone' or 'UI_ApocWallet_MarketYou')
 end
@@ -30,7 +31,7 @@ function Panel.chat(win)
     local bottom=-scroll>=math.max(0,chat:getScrollHeight()-chat:getHeight())-win.fontHeight
     chat:clear()
     for _,line in ipairs(win.marketSession.dialogue.history) do
-        local text=speakerName(line.speaker)..': '..line.text
+        local text=speakerName(line.speaker,line.name)..': '..line.text
         while #text>0 do
             local part=fit(text,chat.width-22)
             if #part==0 then break end
@@ -117,14 +118,14 @@ function Panel.layout(win)
     win.marketNext:setEnable(connected and not busy and s.page<s.pages)
     win.marketRefresh:setEnable(connected and not busy)
     local _,_,w=win:R(win.L.list)
-    win.marketHeading=fit(getText(s.mode=='inventory' and 'UI_ApocWallet_MarketInventory' or s.mode=='expired' and 'UI_ApocWallet_MarketExpired' or 'UI_ApocWallet_MarketBrowse')..'  '..s.page..'/'..s.pages..(s.query~='' and ' ['..s.query..']' or ''),w-8)
+    win.marketHeading=fit(getText(s.mode=='inventory' and 'UI_ApocWallet_MarketInventory' or s.mode=='expired' and 'UI_ApocWallet_MarketExpired' or 'UI_ApocWallet_MarketBrowse')..'  '..P.pageReference(s.mode,s.page)..' / '..s.pages..(s.query~='' and ' ['..s.query..']' or ''),w-8)
     win.marketStatus=getText(s.state=='connected' and 'UI_ApocWallet_MarketConnected' or s.state=='tuning' and 'UI_ApocWallet_MarketTuning' or 'UI_ApocWallet_MarketOffline')
     local _,_,fw,fh=win:R(win.L.feed)
     local ph=math.max(16,math.min(fh-win.fontHeight*2-14,fw*0.43))
     local pw=ph*17/21
     win.marketStatusDisplay=fit(win.marketStatus,fw-pw-18)
     win.marketBalanceDisplay=fit(win.balanceText or '',fw-12)
-    win.marketOperatorDisplay=fit(getText('UI_ApocWallet_MarketOperator'),fw-pw-18)
+    win.marketOperatorDisplay=fit(s.operator and s.operator.name or getText('UI_ApocWallet_MarketOperator'),fw-pw-18)
     local fx,fy=win:R(win.L.feed)
     local chat=win.marketChat
     if chat then
@@ -152,7 +153,7 @@ function Panel.render(win)
     local fh=win.fontHeight
     local ph=math.max(16,math.min(h-fh*2-14,w*0.43))
     local pw=ph*17/21
-    Portrait.draw(win,x+5,y+5,pw,ph,s.state,s.dialogue.talkingUntil)
+    Portrait.draw(win,x+5,y+5,pw,ph,s.state,s.dialogue.talkingUntil,s.operator)
     local tx=x+pw+12
     win:drawText(win.marketOperatorDisplay,tx,y+8,0.5,1,0.65,1,UIFont.Small)
     win:drawText(win.marketStatusDisplay,tx,y+12+fh,0.6,0.8,0.65,1,UIFont.Small)
@@ -204,7 +205,7 @@ function Panel.attach(win)
     s.dialogue.onLine=function(history)
         local line=history[#history]
         local _,_,width=win:R(win.L.log)
-        local text=speakerName(line.speaker)..': '..line.text
+        local text=speakerName(line.speaker,line.name)..': '..line.text
         win.marketLog1=fit(text,width-8)
         win.marketLog2=fit(text:sub(#win.marketLog1+1),width-8)
         Panel.chat(win)

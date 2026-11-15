@@ -4,7 +4,8 @@ local checks,time,saves,packets,world=0,100000,0,{},{}
 local function check(v,m) checks=checks+1; assert(v,m) end
 function isClient() return false end
 function getTimestampMs() return time end
-function ZombRand(a,b) return a+1000 end
+function ZombRand(a,b) return b and a+1000 or 0 end
+Events={OnServerStarted={Add=function() end},OnTickEvenPaused={Add=function() end}}
 function instanceof(o,k) return o and o.kind==k end
 local function list(t) return {size=function() return #t end,get=function(_,i) return t[i+1] end} end
 local persistent={}
@@ -104,6 +105,7 @@ M.data().listings['1'].state='rejected'; M.data().listings['1'].error=nil
 local posted=command(seller,'MarketPost',{token='post1',itemIds={1,2},price=15})
 check(M.data().seq==1,'same-token recovery reuses the original listing')
 check(posted and posted.kind=='posted','posting response')
+check(posted.gossip:find(P.code('Base.Axe'),1,true) and posted.gossip:find('MER%-001'),'posting gossip preserves authoritative cargo and current page')
 check(not axe1.container and not axe2.container,'both exact items removed immediately')
 local listing=M.data().listings['1']
 check(listing.state=='open' and #listing.units==2,'custody published as listing')
@@ -118,6 +120,7 @@ local inv=command(seller,'MarketPage',{token='inventory1',mode='inventory',page=
 check(#inv.rows==0,'tuned radio excluded from posting inventory')
 local bought=command(buyer,'MarketBuy',{token='buy1',listingId='1',count=2,amount=0,items={{type='Base.Gold'}}})
 check(bought and bought.kind=='reserved','purchase reserves selected cargo')
+check(bought.gossip:find(P.code('Base.Axe'),1,true) and bought.gossip:find('MER%-001'),'reservation gossip identifies cargo and page')
 local contested=command(other,'MarketBuy',{token='buy2',listingId='1',count=1})
 check(contested and not contested.ok and contested.error=='SOLD','second buyer cannot reserve held cargo')
 M.update()
@@ -309,4 +312,42 @@ check(withoutCredits.pendingTransactions.pending and next(withoutCredits.credits
     'transaction history without seller credits reconstructs its pending queue')
 check(next(withoutCredits.requests)==nil and withoutCredits.seq==tonumber(unsold.id),
     'missing canonical collections receive defaults while the stored sequence survives')
+local Operators=require 'ApocWallet/Operators'
+withoutCredits.transactions.pending=nil; withoutCredits.pendingTransactions.pending=nil
+Operators.contacts={}
+local operatorRolls=0
+function ZombRand(a,b)
+    if b then return a+1000 end
+    if a==2 then operatorRolls=operatorRolls+1; return (operatorRolls-1)%2 end
+    return 0
+end
+time=time+2000
+local contact=command(seller,'MarketTune',{token='operator-tune',radio={itemId=seller.radio.id}})
+check(contact.operator.name=='IRON ECHO' and contact.operator.texturePrefix=='ironcontrol_','tune includes selected operator metadata')
+check(contact.gossip:find('IRON ECHO',1,true) and contact.gossip:find('MER%-001'),'server greeting identifies operator and bulletin')
+command(seller,'MarketHangup',{token='operator-close'})
+time=time+2000
+local reopened=command(seller,'MarketTune',{token='operator-reopen',radio={itemId=seller.radio.id}})
+check(reopened.operator.key==contact.operator.key and operatorRolls==1,'window closure and retune preserve operator assignment')
+local replacement=item(909,'Base.WalkieTalkie2'); replacement.getDeviceData=seller.radio.getDeviceData
+seller:getInventory():add(replacement)
+time=time+2000
+local switched=command(seller,'MarketTune',{token='operator-radio',radio={itemId=909}})
+check(switched.operator.key==contact.operator.key and operatorRolls==1,'changing radios preserves operator assignment')
+local reconnect=player(seller.index)
+local reconnected=command(reconnect,'MarketTune',{token='operator-reconnect',radio={itemId=reconnect.radio.id}})
+check(reconnected.operator.key==contact.operator.key and operatorRolls==1,'new player connection reuses server-derived character assignment')
+local coded=command(seller,'MarketPage',{token='operator-inventory',mode='inventory',page=1})
+check(coded.gossip:find('MOC%-001'),'backpack acknowledgment contains mode and page')
+local quiet=command(seller,'MarketPage',{token='operator-silent',mode='expired',page=1,silent=true})
+check(not quiet.gossip and quiet.operator.key==contact.operator.key,'silent automatic refresh carries metadata without gossip')
+time=time+600000
+local rerolled=command(seller,'MarketPage',{token='operator-expired',mode='expired',page=1})
+check(rerolled.operator.name=='SPARKS' and rerolled.gossip:find('EXP%-001') and operatorRolls==2,'first interaction after inactivity rolls a fresh operator')
+local id=originalCharacter(seller).characterId
+local deadline=Operators.contacts[id].expires
+time=time+1000
+M.data().transactions['operator-poll']={state='reserved',buyer=originalCharacter(seller),items={{type='Base.Axe'}}}
+M.status(seller,'operator-poll','operator-poll')
+check(Operators.contacts[id].expires==deadline,'status polling does not extend operator inactivity deadline')
 print('Passed '..checks..' production market ownership, custody, purchase, settlement and radio checks.')

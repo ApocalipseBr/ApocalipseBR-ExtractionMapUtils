@@ -13,6 +13,8 @@ integration. Repository conventions live in [AGENTS.md](../AGENTS.md).
 
 - [Player market and radio operator](features/wallet-player-market.md): tune-in, PTBR coded speech, operator portrait/audio, player listings, exact-item delivery and seller-credit contract.
 
+- [Market operators and server gossip](features/wallet-market-operators.md): SPARKS/IRON ECHO, retained ten-minute contacts, server rule registration, coded bulletins and database-loaded PTBR response pools.
+
 - [Wallet courier pickup and delivery](features/wallet-courier-delivery.md): ported drone visuals, batched immediate inventory pickup, persistent offline delivery and the proposed backend debit contract.
 
 - [Wallet-owned skinned radio UI](features/wallet-radio-ui.md): independent handheld/ham windows, 34 skins, native walk-to-radio access, empty list and callback-driven balance display.

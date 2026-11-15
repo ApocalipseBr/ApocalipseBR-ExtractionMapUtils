@@ -105,7 +105,7 @@ check(S.ready() and legacyReads==1 and S.data().marker=='busy','SQL remains auth
 -- Run the real pickup service through delayed entity acknowledgments, including
 -- a player moving the item while SQL is in flight.
 function isClient() return false end
-function ZombRand(lo) return lo+1000 end
+function ZombRand(lo,hi) return hi and lo+1000 or 0 end
 local removed=0
 local inventory={}
 function inventory:getOutermostContainer() return self end

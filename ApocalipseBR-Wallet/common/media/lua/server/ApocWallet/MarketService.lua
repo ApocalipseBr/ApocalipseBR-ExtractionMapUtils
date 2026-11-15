@@ -3,6 +3,8 @@ local Courier=require 'ApocWallet/CourierService'
 local Purchase=require 'ApocWallet/PurchaseService'
 local P=require 'ApocWallet/MarketProtocol'
 local Store=require 'ApocWallet/EntityStore'
+local Operators=require 'ApocWallet/OperatorRules'
+local Gossip=require 'ApocWallet/GossipController'
 if ApocWallet.MarketService then return ApocWallet.MarketService end
 local M={sessions={},nextUpdate=0,lastRequest={},lastStatus={}}
 ApocWallet.MarketService=M
@@ -87,6 +89,25 @@ local function radio(player,locator)
 end
 M.radio=radio
 local function reply(player,token,fields)
+    local session=M.sessions[player]
+    if session and session.operator then
+        local operator=session.operator
+        fields.operator=Operators.presentation(operator)
+        local categories={posted='posted',reserved='reserved',bought='bought',reposted='reposted',recovered='recovered'}
+        local errors={RADIO='error_radio',SIGNAL='error_signal',WAIT='error_wait',ITEM='error_item',
+            SOLD='error_sold',FUNDS='error_funds',STORAGE='error_storage'}
+        local category=fields.ok and categories[fields.kind] or errors[fields.error]
+        if fields.ok and fields.kind=='page' then
+            category=session.command=='MarketTune' and 'greeting' or 'page_'..fields.mode
+        elseif not fields.ok then category=category or 'error_refused' end
+        -- Silent refreshes and polling never produce ordinary page chatter.
+        if category and not (fields.kind=='page' and session.silent) then
+            fields.gossip=Gossip.line(operator,category,{
+                page=P.pageReference(fields.mode or session.mode or 'market',fields.page or session.page or 1),
+                item=fields.code or session.item or 'CARGA-INDEFINIDA',count=fields.count or session.count or 0,
+            })
+        end
+    end
     fields.token=token; fields.onlineId=player:getOnlineID()
     sendServerCommand(player,'ApocWallet','MarketState',fields)
 end
@@ -306,27 +327,40 @@ function M.handle(player,command,args)
         if session and t-(session.lastTune or 0)<1500 then reply(player,args.token,{ok=false,error='WAIT'}); return end
         local r=radio(player,args.radio)
         if not r then reply(player,args.token,{ok=false,error='RADIO'}); return end
-        session={locator=args.radio,radio=r,lastTune=t,last=0,characterId=c.characterId,expires=t+1800000}
+        session={locator=args.radio,radio=r,lastTune=t,last=0,characterId=c.characterId,expires=t+1800000,
+            operator=Operators.contact(c,player),command=command,mode='market',page=1}
         M.sessions[player]=session
         reply(player,args.token,page(player,session,'market',1)); return
     end
     if not session or session.characterId~=c.characterId or t>session.expires or not radio(player,session.locator) then
-        M.sessions[player]=nil; reply(player,args.token,{ok=false,error='RADIO'}); return
+        reply(player,args.token,{ok=false,error='RADIO'}); M.sessions[player]=nil; return
     end
     if t-session.last<300 then reply(player,args.token,{ok=false,error='WAIT'}); return end
     session.last=t; session.expires=t+1800000
+    session.command=command; session.silent=false
     if (command=='MarketPost' or command=='MarketBuy' or command=='MarketRecover' or command=='MarketRepost') and not Courier.persistenceReady() then
         reply(player,args.token,{ok=false,error='STORAGE'}); return
     end
     if command=='MarketPage' then
         if not P.integer(args.page,1,100000) or args.mode~='market' and args.mode~='inventory' and args.mode~='expired' then return end
         if args.query~=nil and (type(args.query)~='string' or #args.query>100 or args.query:find('[%c]')) then return end
-        reply(player,args.token,page(player,session,args.mode,args.page,args.query))
+        session.operator=Operators.contact(c,player)
+        session.silent=args.silent==true
+        local result=page(player,session,args.mode,args.page,args.query)
+        session.mode,session.page=result.mode,result.page
+        reply(player,args.token,result)
     elseif command=='MarketRecover' or command=='MarketRepost' then
+        session.operator=Operators.contact(c,player)
+        local listing=data().listings[tostring(args.listingId)]
+        session.item=listing and P.code(listing.type) or 'CARGA-INDEFINIDA'
         local action,error=manage(player,args,c,command)
         if action then reply(player,args.token,{ok=true,kind=command=='MarketRepost' and 'reposted' or 'recovered',jobId=action.jobId})
         else reply(player,args.token,{ok=false,error=error}) end
     elseif command=='MarketPost' then
+        session.operator=Operators.contact(c,player)
+        local item=type(args.itemIds)=='table' and P.integer(args.itemIds[1],0,2147483647) and carried(player,args.itemIds[1])
+        session.item=item and P.code(item:getFullType()) or 'CARGA-INDEFINIDA'
+        session.count=type(args.itemIds)=='table' and #args.itemIds or 0
         local listing,error=post(player,session,args,c)
         if listing then
             reconcileListing(listing)
@@ -335,6 +369,9 @@ function M.handle(player,command,args)
             reply(player,args.token,{ok=true,kind='posted',code=P.code(listing.type),count=#listing.itemIds,jobId=listing.jobId})
         else reply(player,args.token,{ok=false,error=error}) end
     elseif command=='MarketBuy' then
+        session.operator=Operators.contact(c,player)
+        local listing=data().listings[tostring(args.listingId)]
+        session.item=listing and P.code(listing.type) or 'CARGA-INDEFINIDA'; session.count=args.count
         local tx,error=buy(player,session,args,c)
         if tx then reply(player,args.token,{ok=true,kind='reserved',transaction=tx.id})
         else reply(player,args.token,{ok=false,error=error}) end
@@ -423,9 +460,22 @@ function M.status(player,token,txid)
     local tx=data().transactions[txid]
     local c=identity(player)
     if tx and c and tx.buyer.characterId==c.characterId then
+        local session=M.sessions[player]
+        if session and session.characterId==c.characterId then
+            session.command='MarketStatus'; session.silent=false
+            session.item=P.code(tx.items[1].type); session.count=#tx.items
+        end
         reply(player,token,{ok=tx.state~='failed',kind=tx.state=='complete' and 'bought' or 'pending',
             transaction=txid,error=tx.state=='failed' and 'FUNDS' or nil,jobId=tx.jobId})
     end
+end
+function M.courierGossip(player,packet)
+    local session=M.sessions[player]
+    if not session then return end
+    local c=identity(player)
+    if not c or c.characterId~=session.characterId then return end
+    packet.operator=Operators.presentation(session.operator)
+    packet.gossip=Gossip.line(session.operator,packet.kind=='pickup' and 'eta_pickup' or 'eta_delivery',{seconds=packet.seconds})
 end
 function M.run(player,command,args)
     if not player or type(args)~='table' or not P.token(args.token) then return end

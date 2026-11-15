@@ -18,13 +18,18 @@ function D:stopTuning()
 end
 function D:enqueue(speaker,key,args)
     if #self.queue>=24 then return end
-    self.queue[#self.queue+1]={speaker=speaker,key=key,args=args or {}}
+    self.queue[#self.queue+1]={speaker=speaker,key=key,args=args or {},name=speaker=='operator' and self.operatorName or nil}
+end
+function D:enqueueText(speaker,text,name)
+    if type(text)~='string' or #text==0 or #self.queue>=24 then return end
+    self.queue[#self.queue+1]={speaker=speaker,text=text,name=name}
 end
 function D:page(mode,page)
     local t=getTimestampMs()
     if t-self.lastPage<5000 then return end
     self.lastPage=t
-    self:enqueue('player','UI_ApocWallet_MarketPageTxFmt',{page})
+    local P=require 'ApocWallet/MarketProtocol'
+    self:enqueue('player','UI_ApocWallet_MarketPageTxFmt',{self.operatorName or 'Rede do Mercado',P.pageReference(mode,page)})
     return true
 end
 function D:update()
@@ -32,9 +37,9 @@ function D:update()
     if t<self.nextLine or #self.queue==0 then return end
     self.nextLine=t+1400
     local line=table.remove(self.queue,1)
-    local a=line.args
-    local text=getText(line.key,a[1],a[2],a[3],a[4])
-    self:record(line.speaker,text)
+    local a=line.args or {}
+    local text=line.text or getText(line.key,a[1],a[2],a[3],a[4])
+    self:record(line.speaker,text,line.name)
     if line.speaker=='player' then self.player:Say(text)
     else
         self.talkingUntil=t+1600
@@ -44,8 +49,8 @@ function D:update()
         pcall(function() self.radio:AddDeviceText(text,0.45,1,0.65,nil,nil,0) end)
     end
 end
-function D:record(speaker,text)
-    self.history[#self.history+1]={speaker=speaker,text=text}
+function D:record(speaker,text,name)
+    self.history[#self.history+1]={speaker=speaker,text=text,name=name or (speaker=='operator' and self.operatorName or nil)}
     if self.onLine then self.onLine(self.history) end
 end
 function D:close()

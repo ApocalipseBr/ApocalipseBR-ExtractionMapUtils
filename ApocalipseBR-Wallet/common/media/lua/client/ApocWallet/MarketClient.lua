@@ -27,6 +27,15 @@ function C.open(win)
     return s
 end
 local function changed(s) if s.onChange then s.onChange(s) end end
+local function operatorLine(s,args,key,values)
+    if args.gossip then
+        s.dialogue:enqueueText('operator',args.gossip,args.operator and args.operator.name)
+    else s.dialogue:enqueue('operator',key,values) end
+end
+local function pageContext(s)
+    local sq=s.player:getCurrentSquare()
+    return P.pageReference(s.mode,s.page)..', setor '..P.sector(sq:getX(),sq:getY(),sq:getZ())
+end
 function C.request(s,command,args)
     if s.pending then return false end
     args=args or {}; args.token=token(s.player)
@@ -48,36 +57,41 @@ function C.page(s,mode,page,query)
     local t=getTimestampMs()
     if t<(s.nextNavigation or 0) then return end
     s.nextNavigation=t+350
-    if C.request(s,'MarketPage',{mode=mode,page=page,query=query or s.query}) then s.pending.pageChatter=s.dialogue:page(mode,page) end
+    local chatter=s.dialogue:page(mode,page)
+    if C.request(s,'MarketPage',{mode=mode,page=page,query=query or s.query,silent=not chatter}) then s.pending.pageChatter=chatter end
 end
 function C.post(s,row,count,price)
     if s.state~='connected' or s.pending or s.transaction then return end
     local ids={}
     for i=1,count do ids[i]=row.ids[i] end
-    local sq=s.player:getCurrentSquare()
-    s.dialogue:enqueue('player','UI_ApocWallet_MarketPostTxFmt',{row.code,count,P.sector(sq:getX(),sq:getY(),sq:getZ())})
+    s.dialogue:enqueue('player','UI_ApocWallet_MarketPostTxFmt',{s.dialogue.operatorName or 'Rede do Mercado',row.code,count,pageContext(s)})
     C.request(s,'MarketPost',{itemIds=ids,price=price})
 end
 function C.buy(s,row,count)
     if s.state~='connected' or s.pending or s.transaction then return end
-    local sq=s.player:getCurrentSquare()
-    s.dialogue:enqueue('player','UI_ApocWallet_MarketBuyTxFmt',{row.code,count,P.sector(sq:getX(),sq:getY(),sq:getZ())})
+    s.dialogue:enqueue('player','UI_ApocWallet_MarketBuyTxFmt',{s.dialogue.operatorName or 'Rede do Mercado',row.code,count,pageContext(s)})
     C.request(s,'MarketBuy',{listingId=row.id,count=count})
 end
 function C.manage(s,row,command)
     if s.state~='connected' or s.pending or s.transaction then return end
+    s.dialogue:enqueue('player',command=='MarketRepost' and 'UI_ApocWallet_MarketRepostTxFmt' or 'UI_ApocWallet_MarketRecoverTxFmt',
+        {s.dialogue.operatorName or 'Rede do Mercado',row.code,pageContext(s)})
     C.request(s,command,{listingId=row.id})
 end
 local function apply(s,args)
     local request=s.pending
     local command=request.command
+    if type(args.operator)=='table' then
+        s.operator=args.operator
+        s.dialogue.operatorName=args.operator.name
+    end
     if not args.ok and args.error=='STORAGE' then
         -- Preserve the original post/buy token across a temporary recording
         -- failure. A retry must resume the same intent, not create a new one.
         request.sent=getTimestampMs()
         if not request.storageNotice then
             request.storageNotice=true
-            s.dialogue:enqueue('operator','UI_ApocWallet_MarketStorageError')
+            operatorLine(s,args,'UI_ApocWallet_MarketStorageError')
         end
         changed(s)
         return
@@ -90,26 +104,26 @@ local function apply(s,args)
         local errors={RADIO='UI_ApocWallet_MarketRadioError',SIGNAL='UI_ApocWallet_MarketSignalError',
             WAIT='UI_ApocWallet_MarketWait',ITEM='UI_ApocWallet_MarketItemError',SOLD='UI_ApocWallet_MarketSold',FUNDS='UI_ApocWallet_MarketFunds',
             UNAVAILABLE='UI_ApocWallet_MarketRefused'}
-        s.dialogue:enqueue('operator',errors[args.error] or 'UI_ApocWallet_MarketRefused')
+        operatorLine(s,args,errors[args.error] or 'UI_ApocWallet_MarketRefused')
     elseif args.kind=='page' then
         s.mode,s.page,s.pages,s.rows=args.mode,args.page,args.pages,args.rows
         s.query=args.query or ''
         s.state='connected'
         if args.transaction then s.transaction=args.transaction; s.nextPoll=getTimestampMs()+2500 end
-        if command=='MarketTune' then s.dialogue:enqueue('operator','UI_ApocWallet_MarketTuneRx') end
-        if command=='MarketPage' and request.pageChatter then s.dialogue:enqueue('operator','UI_ApocWallet_MarketPageRxFmt',{args.page}) end
+        if command=='MarketTune' then operatorLine(s,args,'UI_ApocWallet_MarketTuneRx',{s.dialogue.operatorName or 'Rede do Mercado',P.pageReference(args.mode,args.page)}) end
+        if command=='MarketPage' and request.pageChatter then operatorLine(s,args,'UI_ApocWallet_MarketPageRxFmt',{P.pageReference(args.mode,args.page)}) end
     elseif args.kind=='posted' then
-        s.dialogue:enqueue('operator','UI_ApocWallet_MarketPostRxFmt',{args.code,args.count})
+        operatorLine(s,args,'UI_ApocWallet_MarketPostRxFmt',{args.code,args.count})
         s.needsRefresh=true
     elseif args.kind=='reposted' or args.kind=='recovered' then
-        s.dialogue:enqueue('operator',args.kind=='reposted' and 'UI_ApocWallet_MarketReposted' or 'UI_ApocWallet_MarketRecovered')
+        operatorLine(s,args,args.kind=='reposted' and 'UI_ApocWallet_MarketReposted' or 'UI_ApocWallet_MarketRecovered')
         s.needsRefresh=true
     elseif args.kind=='reserved' then
         s.transaction=args.transaction; s.nextPoll=getTimestampMs()+2500
-        s.dialogue:enqueue('operator','UI_ApocWallet_MarketBuyWait')
+        operatorLine(s,args,'UI_ApocWallet_MarketBuyWait')
     elseif args.kind=='bought' then
         s.transaction=nil; s.needsRefresh=true
-        s.dialogue:enqueue('operator','UI_ApocWallet_MarketBuyRx')
+        operatorLine(s,args,'UI_ApocWallet_MarketBuyRx')
         if s.refreshBalance then s.refreshBalance() end
     end
     changed(s)
@@ -139,7 +153,7 @@ function C.update()
             elseif not s.pending and s.transaction and t>=s.nextPoll then
                 s.nextPoll=t+2500; C.request(s,'MarketStatus',{transaction=s.transaction})
             elseif not s.pending and s.needsRefresh then
-                s.needsRefresh=nil; C.request(s,'MarketPage',{mode=s.mode,page=s.page,query=s.query})
+                s.needsRefresh=nil; C.request(s,'MarketPage',{mode=s.mode,page=s.page,query=s.query,silent=true})
             end
         end
     end
@@ -150,14 +164,14 @@ function C.courierETA(args)
             s.etaSeen=s.etaSeen or {}
             if not s.etaSeen[args.id] then
                 s.etaSeen[args.id]=true
-                s.dialogue:enqueue('operator',args.kind=='pickup' and 'UI_ApocWallet_CourierPickupFmt' or 'UI_ApocWallet_CourierDeliveryFmt',{args.seconds})
+                operatorLine(s,args,args.kind=='pickup' and 'UI_ApocWallet_CourierPickupFmt' or 'UI_ApocWallet_CourierDeliveryFmt',{args.seconds})
             end
         end
     end
 end
 function C.close(s)
     if C.sessions[s.win.playerIndex]~=s then return end
-    if s.state=='connected' and not s.player:isDead() then s.player:Say(getText('UI_ApocWallet_MarketHangupTx')) end
+    if s.state=='connected' and not s.player:isDead() then s.player:Say(getText('UI_ApocWallet_MarketHangupTx',s.dialogue.operatorName or 'Rede do Mercado')) end
     s.dialogue:close(); s.dialogue:sound('Hangup')
     sendClientCommand(s.player,'ApocWallet','MarketHangup',{token=token(s.player)})
     C.sessions[s.win.playerIndex]=nil
