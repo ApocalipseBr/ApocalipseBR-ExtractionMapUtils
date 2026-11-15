@@ -1,10 +1,11 @@
 local root='ApocalipseBR-Wallet/common/media/lua/'
 package.path=root..'shared/?.lua;'..root..'server/?.lua;'..package.path
 local checks,time,saves,packets,world,loaded,created=0,100000,0,{}, {},true,0
+local randomBounds={}
 local function check(v,m) checks=checks+1; assert(v,m) end
 function isClient() return false end
 function getTimestampMs() return time end
-function ZombRand(lo,hi) return lo+10000 end
+function ZombRand(lo,hi) randomBounds[#randomBounds+1]={lo,hi}; return lo+10000 end
 local persisted={}
 local failSave,storeAvailable=false,true
 package.loaded['ApocWallet/EntityStore']={data=function() return persisted end,ready=function() return storeAvailable end,
@@ -55,6 +56,7 @@ local goods={{type='Base.Axe',count=2}}
 local id=C.delivery('alice','receipt1',destination,goods)
 check(id and saves>0,'durable job before dispatch')
 check(persisted.jobs[id].due-time>=30000 and persisted.jobs[id].due-time<=90000,'ETA bounds')
+check(randomBounds[1][1]==30000 and randomBounds[1][2]==90001,'dropoff ETA range unchanged')
 destination.x=99; goods[1].count=99
 check(persisted.jobs[id].x==10 and persisted.jobs[id].items[1].count==2,'snapshots immutable to caller')
 check(C.delivery('alice','receipt1',{x=10,y=20,z=0},{{type='Base.Axe',count=2}})==id,'receipt replay idempotent')
@@ -73,6 +75,11 @@ check(#world==1 and persisted.jobs[id].placed==1 and persisted.jobs[id].state=='
 persisted.jobs[id].placed=0
 failAt=nil; time=time+250; C.update()
 check(#world==3 and persisted.jobs[id].state=='departing','offline ground delivery on saved square')
+local deliveryManifest
+for _,p in ipairs(packets) do if p[2]=='CourierTransmission' then deliveryManifest=p[3] end end
+check(deliveryManifest and #deliveryManifest.lines==2,'batched dropoff has separate cargo entries')
+check(deliveryManifest.lines[1].code==ApocWallet.MarketProtocol.code('Base.Axe') and deliveryManifest.lines[1].count==2,'dropoff codes and quantities derived server-side')
+check(not deliveryManifest.lines[1].blob and not deliveryManifest.lines[1].type,'cosmetic manifest has no item blobs or type payload')
 time=time+250; C.update(); check(#world==3,'no repeat on next tick')
 -- Simulated Lua reload keeps durable receipts and progress, no online player.
 package.loaded['ApocWallet/CourierService']=nil
@@ -86,11 +93,11 @@ function inv:DoRemoveItem(item) removed=removed+1; item.container=nil end
 function sendRemoveItemFromContainer() end
 local player={getUsername=function() return 'alice' end,isDead=function() return false end,
     getCurrentSquare=function() return square end,getInventory=function() return inv end,isEquipped=function() return false end}
-local function inventoryItem(id)
+local function inventoryItem(id,fullType)
     local item={container=inv}
     function item:getContainer() return self.container end
     function item:getID() return id end
-    function item:getFullType() return 'Base.Axe' end
+    function item:getFullType() return fullType or 'Base.Axe' end
     return item
 end
 ApocBrApiBridge={encodeItem=function(item) return 'native-save-'..item:getID() end}
@@ -98,13 +105,28 @@ ApocBRModEntities={character=function() return {status='OK',characterId='1234567
     steamId='76561198000000001',sourceServerId=2} end}
 local pickup=C.pickup(player,'post1',{inventoryItem(1)})
 check(pickup and removed==1,'pickup immediately removes inventory item')
+check(randomBounds[#randomBounds][1]==10000 and randomBounds[#randomBounds][2]==30001,'pickup ETA is 10 to 30 seconds inclusive')
 check(persisted.escrow['pickup:12345678-1234-4234-8234-123456789abc:post1'].state=='held','pickup exact item blob in persistent custody')
 local pickup2=C.pickup(player,'post2',{inventoryItem(2)})
 check(pickup2==pickup and removed==2,'pickup batch uses single drone')
 check(C.pickup(player,'post1',{inventoryItem(1)})==pickup and removed==2,'pickup replay cannot remove twice')
+check(C.pickup(player,'post3',{inventoryItem(3,'Base.Hammer')})==pickup and removed==3,'different cargo types share pickup flight')
 local before=#world
 time=persisted.jobs[pickup].due; C.update()
 check(#world==before,'pickup animation never creates cargo')
+local pickupManifest,flight
+for _,p in ipairs(packets) do
+    if p[2]=='CourierTransmission' and p[3].id==pickup then pickupManifest=p[3] end
+    if p[2]=='CourierFlight' and p[3].id==pickup then flight=p[3] end
+end
+check(pickupManifest and #pickupManifest.lines==2 and pickupManifest.lines[1].count==2,'pickup manifest combines accepted batches without replay duplicates')
+check(flight.hover==3000 and flight.approach==8000 and flight.depart==8000,'pickup waits one extra second and traverses farther in the same time')
+local transmissions=0
+for _,p in ipairs(packets) do if p[2]=='CourierTransmission' then transmissions=transmissions+1 end end
+time=time+250; C.update(); C.sync(player)
+local afterTransmissions=0
+for _,p in ipairs(packets) do if p[2]=='CourierTransmission' then afterTransmissions=afterTransmissions+1 end end
+check(afterTransmissions==transmissions,'updates and sync do not replay cargo announcements')
 -- Purchase API succeeds after disconnect and moving the original player.
 ApocBRModEntities={character=function() return {status='OK',characterId='12345678-1234-4234-8234-123456789abc',
     steamId='76561198000000001',sourceServerId=2} end}

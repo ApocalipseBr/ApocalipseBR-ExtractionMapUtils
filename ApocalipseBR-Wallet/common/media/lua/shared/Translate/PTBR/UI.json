@@ -76,5 +76,8 @@
   "UI_ApocWallet_MarketSearchHint": "Nome do item (vazio para mostrar todos):",
   "UI_ApocWallet_MarketClearSearch": "Limpar busca",
   "UI_ApocWallet_MarketMenuHint": "Mercado, mochila, itens expirados e busca por nome.",
-  "UI_ApocWallet_MarketTerms": "Anúncios duram 48 horas reais. Taxa de 10% sobre vendas concluídas, arredondada para baixo em créditos inteiros."
+  "UI_ApocWallet_MarketTerms": "Anúncios duram 48 horas reais. Taxa de 10% sobre vendas concluídas, arredondada para baixo em créditos inteiros.",
+  "UI_ApocWallet_CourierDrone": "Drone",
+  "UI_ApocWallet_CourierPickupCargoFmt": "Recolhendo %1, quantidade %2. Carga a bordo.",
+  "UI_ApocWallet_CourierDropoffCargoFmt": "Desembarcando %1, quantidade %2. Carga no destino."
 }

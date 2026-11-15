@@ -34,8 +34,7 @@ function D:update()
     local line=table.remove(self.queue,1)
     local a=line.args
     local text=getText(line.key,a[1],a[2],a[3],a[4])
-    self.history[#self.history+1]={speaker=line.speaker,text=text}
-    if #self.history>12 then table.remove(self.history,1) end
+    self:record(line.speaker,text)
     if line.speaker=='player' then self.player:Say(text)
     else
         self.talkingUntil=t+1600
@@ -44,6 +43,9 @@ function D:update()
         -- cannot currently emit (for example, after the player moves away).
         pcall(function() self.radio:AddDeviceText(text,0.45,1,0.65,nil,nil,0) end)
     end
+end
+function D:record(speaker,text)
+    self.history[#self.history+1]={speaker=speaker,text=text}
     if self.onLine then self.onLine(self.history) end
 end
 function D:close()

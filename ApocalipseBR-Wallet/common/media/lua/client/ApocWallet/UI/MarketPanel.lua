@@ -1,10 +1,15 @@
 require 'ISUI/ISButton'
 require 'ISUI/ISTextBox'
 require 'ISUI/ISContextMenu'
+require 'ISUI/ISScrollingListBox'
 local Client=require 'ApocWallet/MarketClient'
 local Portrait=require 'ApocWallet/OperatorPortrait'
 local P=require 'ApocWallet/MarketProtocol'
 local Panel={}
+local function speakerName(speaker)
+    return getText(speaker=='operator' and 'UI_ApocWallet_MarketOperator' or
+        speaker=='drone' and 'UI_ApocWallet_CourierDrone' or 'UI_ApocWallet_MarketYou')
+end
 local function fit(text,width)
     local tm=getTextManager()
     while #text>0 and tm:MeasureStringX(UIFont.Small,text)>width do
@@ -17,6 +22,23 @@ end
 local function selected(win)
     local row=win.list.items[win.list.selected]
     return row and row.item or nil
+end
+function Panel.chat(win)
+    local chat=win.marketChat
+    if not chat then return end
+    local scroll=chat:getYScroll()
+    local bottom=-scroll>=math.max(0,chat:getScrollHeight()-chat:getHeight())-win.fontHeight
+    chat:clear()
+    for _,line in ipairs(win.marketSession.dialogue.history) do
+        local text=speakerName(line.speaker)..': '..line.text
+        while #text>0 do
+            local part=fit(text,chat.width-22)
+            if #part==0 then break end
+            chat:addItem(part,{speaker=line.speaker})
+            text=text:sub(#part+1)
+        end
+    end
+    chat:setYScroll(bottom and -math.max(0,chat:getScrollHeight()-chat:getHeight()) or scroll)
 end
 local function prompt(win,key,max,callback)
     if win.marketModal then return end
@@ -103,6 +125,14 @@ function Panel.layout(win)
     win.marketStatusDisplay=fit(win.marketStatus,fw-pw-18)
     win.marketBalanceDisplay=fit(win.balanceText or '',fw-12)
     win.marketOperatorDisplay=fit(getText('UI_ApocWallet_MarketOperator'),fw-pw-18)
+    local fx,fy=win:R(win.L.feed)
+    local chat=win.marketChat
+    if chat then
+        chat:setX(fx+pw+12); chat:setY(fy+12+win.fontHeight*2)
+        chat:setWidth(math.max(24,fw-pw-18)); chat:setHeight(math.max(win.fontHeight,fh-win.fontHeight*3-24))
+        chat.itemheight=win.fontHeight+2
+        Panel.chat(win)
+    end
 end
 function Panel.populate(win)
     local s=win.marketSession
@@ -139,6 +169,17 @@ end
 function Panel.attach(win)
     if win.marketSession then return win end
     local s=Client.open(win); win.marketSession=s
+    local chat=ISScrollingListBox:new(0,0,100,100)
+    chat:initialise(); chat:instantiate(); win:addChild(chat)
+    chat.drawBorder=false; chat.backgroundColor={r=0,g=0,b=0,a=0.2}
+    chat.doDrawItem=function(list,y,item)
+        local visibleY=y+list:getYScroll()
+        if visibleY < -list.itemheight or visibleY>list:getHeight() then return y+list.itemheight end
+        local drone=item.item.speaker=='drone'
+        list:drawText(item.text,2,y+1,drone and 0.9 or 0.6,0.95,drone and 0.5 or 0.7,1,UIFont.Small)
+        return y+list.itemheight
+    end
+    win.marketChat=chat
     local function button(fn)
         local b=ISButton:new(0,0,10,10,'',win,fn)
         b.displayBackground=false; b:initialise(); b:instantiate(); win:addChild(b); return b
@@ -163,9 +204,10 @@ function Panel.attach(win)
     s.dialogue.onLine=function(history)
         local line=history[#history]
         local _,_,width=win:R(win.L.log)
-        local text=(line.speaker=='operator' and getText('UI_ApocWallet_MarketOperator') or getText('UI_ApocWallet_MarketYou'))..': '..line.text
+        local text=speakerName(line.speaker)..': '..line.text
         win.marketLog1=fit(text,width-8)
         win.marketLog2=fit(text:sub(#win.marketLog1+1),width-8)
+        Panel.chat(win)
     end
     win.marketLayout=Panel.layout; win.marketRender=Panel.render
     local oldLayout=win.layout

@@ -85,7 +85,7 @@ Client.courierETA({onlineId=7,id='courier1',kind='delivery',seconds=45})
 Client.courierETA({onlineId=7,id='courier1',kind='delivery',seconds=30})
 check(#s.dialogue.queue==etaCount+1,'ETA refresh does not repeatedly speak')
 -- Attach the real market panel to mocked native widgets.
-package.loaded['ISUI/ISContextMenu']=true; package.loaded['ISUI/ISButton']=true; package.loaded['ISUI/ISTextBox']=true
+package.loaded['ISUI/ISScrollingListBox']=true; package.loaded['ISUI/ISContextMenu']=true; package.loaded['ISUI/ISButton']=true; package.loaded['ISUI/ISTextBox']=true
 local function widget()
     local w={}
     for _,field in ipairs({'X','Y','Width','Height','Title','Tooltip','Enable'}) do w['set'..field]=function(self,v) self[field]=v end end
@@ -93,6 +93,18 @@ local function widget()
     return w
 end
 ISButton={new=function(_,x,y,w,h,title,target,onclick) local b=widget(); b.onclick=onclick; return b end}
+ISScrollingListBox={new=function()
+    local w=widget(); w.items={}; w.width=100; w.height=100; w.scroll=0
+    function w:setWidth(v) self.width=v end
+    function w:setHeight(v) self.height=v end
+    function w:getHeight() return self.height end
+    function w:getYScroll() return self.scroll end
+    function w:setYScroll(v) self.scroll=v end
+    function w:getScrollHeight() return #self.items*(self.itemheight or 16) end
+    function w:clear() self.items={} end
+    function w:addItem(text,item) self.items[#self.items+1]={text=text,item=item} end
+    return w
+end}
 local modal
 ISTextBox={new=function(_,x,y,w,h,text,default,target,callback)
     modal={entry={setOnlyNumbers=function() end,getText=function() return modal.value or '1' end},target=target,callback=callback,
@@ -149,6 +161,15 @@ Client.receive({onlineId=7,token=retryToken,ok=true,kind='reposted'})
 check(s.needsRefresh,'repost acknowledgment refreshes stock')
 s.pending=nil; s.needsRefresh=nil; Panel.action(win); menuOptions[1].fn()
 check(s.pending.command=='MarketRecover','recovery option requests courier return')
+for i=1,30 do s.dialogue:record(i%2==0 and 'operator' or 'player','long message '..i..string.rep(' cargo',20)) end
+check(#s.dialogue.history>12 and #win.marketChat.items>30,'transcript preserves all session exchanges and wraps long lines')
+check(win.marketChat.scroll<0,'transcript follows latest messages')
+win.marketChat.scroll=0
+s.dialogue:record('drone','CARGA-12345')
+check(win.marketChat.scroll==0,'reading older messages preserves scroll position')
+local oldCount=#win.marketChat.items
+Panel.layout(win)
+check(#win.marketChat.items==oldCount,'layout rewrap keeps complete transcript')
 Client.close(s)
 check(not Client.sessions[0] and packets[#packets].command=='MarketHangup','closing releases dialogue and channel')
 print('Passed '..checks..' market client handshake, coded dialogue, rate limiting, retry, portrait and UI checks.')

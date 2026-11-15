@@ -936,33 +936,33 @@ function BirdSoundSystem.OnWeaponSwing(character, weapon)
 end
 
 -- 8. INITIALIZATION
-function BirdSoundSystem.init()
-    -- B42 SAFETY: isServer() is strictly enforced; getWorld() must exist
-    if isServer() or BirdSoundSystem.isInitialized then return end
+-- function BirdSoundSystem.init()
+--     -- B42 SAFETY: isServer() is strictly enforced; getWorld() must exist
+--     if isServer() or BirdSoundSystem.isInitialized then return end
     
-    -- Ensure player exists before grabbing emitters
-    if not getPlayer() then return end
+--     -- Ensure player exists before grabbing emitters
+--     if not getPlayer() then return end
 
-    if BirdSoundSystem.allocateEmitterPool() then
-        local gt = getGameTime()
-        BirdSoundSystem.lastCheckMinutesStamp = gt:getMinutesStamp()
-        BirdSoundSystem.realTimeCounter = 0
-        BirdSoundSystem.startupTimer = 0  -- Initialize startup timer
-        BirdSoundSystem.startPauseTimer = 0  -- Initialize start pause timer
-        BirdSoundSystem.lastSpawnTime = -1  -- Initialize last spawn time
+--     if BirdSoundSystem.allocateEmitterPool() then
+--         local gt = getGameTime()
+--         BirdSoundSystem.lastCheckMinutesStamp = gt:getMinutesStamp()
+--         BirdSoundSystem.realTimeCounter = 0
+--         BirdSoundSystem.startupTimer = 0  -- Initialize startup timer
+--         BirdSoundSystem.startPauseTimer = 0  -- Initialize start pause timer
+--         BirdSoundSystem.lastSpawnTime = -1  -- Initialize last spawn time
         
-        -- Set initial trigger times to prevent burst at startup
-        local initialDelay = 10.0  -- 10 game minutes after startup
-        for _, dir in ipairs({"front", "rear", "side"}) do
-            BirdSoundSystem.nextTriggerTime[dir] = gt:getWorldAgeHours() * 60 + initialDelay
-        end
+--         -- Set initial trigger times to prevent burst at startup
+--         local initialDelay = 10.0  -- 10 game minutes after startup
+--         for _, dir in ipairs({"front", "rear", "side"}) do
+--             BirdSoundSystem.nextTriggerTime[dir] = gt:getWorldAgeHours() * 60 + initialDelay
+--         end
         
-        Events.OnTick.Add(BirdSoundSystem.onTick)
-        Events.OnWeaponSwing.Add(BirdSoundSystem.OnWeaponSwing)
-        BirdSoundSystem.isInitialized = true
-        if DEBUG then print("[BirdSoundSystem] B42 Unified Module Active with 5s startup grace period") end
-    end
-end
+--         Events.OnTick.Add(BirdSoundSystem.onTick)
+--         Events.OnWeaponSwing.Add(BirdSoundSystem.OnWeaponSwing)
+--         BirdSoundSystem.isInitialized = true
+--         if DEBUG then print("[BirdSoundSystem] B42 Unified Module Active with 5s startup grace period") end
+--     end
+-- end
 
--- Changed from OnGameStart to OnCreatePlayer for stability
-Events.OnCreatePlayer.Add(BirdSoundSystem.init)
+-- -- Changed from OnGameStart to OnCreatePlayer for stability
+-- Events.OnCreatePlayer.Add(BirdSoundSystem.init)

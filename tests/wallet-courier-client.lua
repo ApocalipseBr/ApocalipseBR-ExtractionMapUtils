@@ -6,7 +6,7 @@ local function event() return {Add=function() end} end
 Events={OnServerCommand=event(),OnPostRender=event(),OnTick=event(),OnDisconnect=event()}
 function isServer() return false end
 function getTimestampMs() return time end
-function getText(key,arg) return key..':'..arg end
+function getText(key,...) local text=key; for _,arg in ipairs({...}) do text=text..':'..arg end; return text end
 require 'ApocWallet/Protocol'
 package.loaded['ApocWallet/DroneRenderer']={draw=function(...) draws[#draws+1]={...} end}
 local C=require 'ApocWallet/CourierClient'
@@ -29,11 +29,54 @@ function cell:getGridSquare(x,y)
         isDoorBlockedTo=function() return false end,isWindowTo=function() return false end}
 end
 local path=Route.plan(cell,5,5,0)
-check(#path==13 and path[#path].x==5.5,'bounded grid path reaches saved destination')
+check(#path==25 and path[#path].x==5.5,'bounded grid path reaches saved destination')
+local openSquare=cell.getGridSquare
+function cell:getGridSquare(x,y)
+    if math.abs(x-5)+math.abs(y-5)>12 then return nil end
+    return openSquare(self,x,y)
+end
+local shorter,shortVertical=Route.plan(cell,5,5,0)
+check(#shorter==13 and not shortVertical,'limited loaded area preserves shorter horizontal route')
 function cell:getGridSquare(x,y)
     return {isSolid=function() return false end,isBlockedTo=function() return true end,
         isDoorBlockedTo=function() return false end,isWindowTo=function() return false end}
 end
 local enclosed,vertical=Route.plan(cell,5,5,0)
 check(vertical and enclosed[1].x==enclosed[2].x,'enclosed square uses vertical visual instead of crossing walls')
+local speech,audio,records,captions={}, {}, {}, {}
+UIFont={Small=1}
+TextDrawObject={new=function() return {ReadString=function(_,_,text) speech[#speech+1]=text end,
+    Draw=function(_,x,y) captions[#captions+1]={x,y} end} end}
+function getWorld() return {getFreeEmitter=function(_,x,y,z)
+    audio[#audio+1]={x,y,z}; return {playSound=function() end}
+end} end
+ApocWallet.MarketClient={sessions={{player={getUsername=function() return 'alice' end},
+    dialogue={record=function(_,speaker,text) records[#records+1]={speaker,text} end},radio={AddDeviceText=function() end}}}}
+local transmission={id='cargo',kind='pickup',owner='alice',x=10,y=20,z=0,
+    lines={{code='CARGA-00001',count=2},{code='CARGA-00002',count=1}}}
+C.receive('CourierTransmission',transmission)
+C.updateTransmissions()
+check(#speech==1 and #records==1 and records[1][1]=='drone','first cargo line reaches world bubble and owner chat')
+check(audio[1][1]==10 and audio[1][2]==20,'squelch originates at drone position')
+time=time+2999; C.updateTransmissions(); check(#speech==1,'first pickup message stays visible for three seconds')
+time=time+1; C.updateTransmissions(); check(#speech==2,'separate cargo lines three seconds apart')
+C.receive('CourierTransmission',transmission); C.updateTransmissions()
+check(#speech==2,'duplicate cosmetic packet cannot repeat manifest')
+time=time+2999; C.updateTransmissions(); check(C.transmissions.cargo and C.transmissions.cargo.text,'last pickup message stays visible for three seconds')
+time=time+1; C.updateTransmissions(); check(not C.transmissions.cargo,'finished transmission cleaned up after last message')
+C.receive('CourierTransmission',{id='drop',kind='delivery',owner='alice',x=1,y=2,z=0,lines={{code='CARGA-00003',count=3}}})
+C.updateTransmissions()
+check(speech[3]:find('DropoffCargoFmt',1,true),'delivery has its own cargo transmission')
+function getNumActivePlayers() return 1 end
+function getSpecificPlayer() return {getZ=function() return 0 end,getX=function() return 1 end,getY=function() return 2 end} end
+function getCore() return {getZoom=function() return 2 end} end
+IsoUtils={XToScreen=function(x) return x*10 end,YToScreen=function(_,y) return y*10 end}
+IsoCamera={getOffX=function() return 0 end,getOffY=function() return 0 end,
+    getScreenLeft=function() return 100 end,getScreenTop=function() return 200 end}
+C.render()
+check(captions[1][1]==105 and captions[1][2]==186,'world caption projection respects player viewport and zoom')
+time=time+2999; C.updateTransmissions()
+check(C.transmissions.drop and C.transmissions.drop.text,'single dropoff message stays visible for three seconds')
+time=time+1; C.updateTransmissions()
+check(not C.transmissions.drop,'single dropoff message clears after three seconds')
 print('Passed '..checks..' courier client timing, approach/departure, ETA and path checks.')

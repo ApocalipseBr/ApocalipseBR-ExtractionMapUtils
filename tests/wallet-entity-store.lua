@@ -199,4 +199,33 @@ ApocWallet.EntityStore=nil;package.loaded['ApocWallet/EntityStore']=nil
 S=require 'ApocWallet/EntityStore';S.update();ack();tick()
 check(not S.ready() and #requests==1 and #requests[1].operations==0,'empty scope does not activate before its initial head commits')
 ack('OK');tick();check(S.ready() and S.revision=='1','empty scope initializes atomically')
+-- Persist a never-purchased listing, then load only the records SQL actually holds.
+S.run('unsold-seed',function()
+    S.data().market={seq=1,listings={['1']={id='1',state='open',openedAt=time,
+        expiresAt=time+1000,seller={characterId='original-life'},
+        units={{state='available',blob='original-item-blob'}}}}}
+    S.persist('market.$','seq','market.listings','1')
+end)
+tick();ack();tick()
+check(database['market.listings:1'] and not database['market.transactions:1'],
+    'unsold listing is durable without a transaction record')
+ApocWallet.EntityStore=nil;package.loaded['ApocWallet/EntityStore']=nil
+S=require 'ApocWallet/EntityStore';S.update();ack();tick()
+check(S.data().market.transactions==nil and S.data().market.credits==nil,
+    'actual record loader leaves empty market collections absent')
+ApocWallet.CourierService=nil;package.loaded['ApocWallet/CourierService']=nil
+ApocWallet.PurchaseService=nil;package.loaded['ApocWallet/PurchaseService']=nil
+ApocWallet.MarketService=nil;package.loaded['ApocWallet/MarketService']=nil
+Market=require 'ApocWallet/MarketService'
+time=time+1001
+S.run('unsold-expiry',Market.update);tick()
+check(S.ready() and #requests==1 and requests[1].operations[1].collection=='market.listings',
+    'cold-loaded never-purchased listing reaches expiry through the normal queued update')
+ack();tick()
+local restored=Market.data()
+check(restored.expiredListings['1'] and not restored.openListings['1']
+    and restored.listings['1'].units[1].blob=='original-item-blob',
+    'expiry reconstructs the expired index and retains native cargo after reload')
+check(ApocBRModEntities.decode(database['market.listings:1'].payload).value.state=='expired',
+    'expiry of never-purchased stock commits to its canonical database record')
 print('Passed '..checks..' mutation store, bounded-write and recovery checks.')

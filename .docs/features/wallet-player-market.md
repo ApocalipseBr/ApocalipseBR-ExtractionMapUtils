@@ -45,7 +45,14 @@ durably queued delivery. Delivery/pickup ETA is spoken once per courier job;
 later ETA syncs update text without repeated chatter. Page requests allow one
 short player/operator exchange per five seconds, with actual navigation paced
 at 350 ms. Silent purchase-status polling does not produce gossip. Lines are
-spaced 1.4 seconds apart and queues/history are bounded. All captions, dialogs,
+spaced 1.4 seconds apart and the outgoing queue remains bounded at 24 lines.
+The display beside the operator portrait now holds a scrollable, wrapped
+transcript of all player/operator/drone lines emitted during the open wallet
+session. It follows new messages while at the bottom and preserves the scroll
+position when reading older messages. Resizing/skin layout rewraps the transcript;
+closing the session releases its history. The two-line log strip and native
+player/radio text remain available. Drone manifests use their own three-second
+spacing, as described in the [courier guide](wallet-courier-delivery.md). All captions, dialogs,
 and protocol speech use PTBR keys; the existing Brazilian-Portuguese fallback
 policy remains in both EN and PTBR catalogs.
 
@@ -120,6 +127,12 @@ the [courier guide](wallet-courier-delivery.md) remains.
 ## Listing expiry, recovery, fees and search
 
 Status: implemented; awaiting in-game multiplayer validation. Updated 2026-11-12.
+
+The [2026-11-14 unsold-listing hotfix](../hotfixes/wallet-unsold-listing-expiry.md)
+initializes canonical market collections independently after database reload.
+Listings with no purchase transactions or seller-credit history can rebuild
+their expired index and enter the existing recovery/repost flow. Lua regression
+coverage includes actual record-loader reconstruction through a mocked transport.
 
 Each listing remains public for **48 real-world hours**, starting when its exact
 items enter market custody. `getTimestampMs()` is epoch wall-clock time
@@ -275,3 +288,10 @@ New EN/PTBR catalog entries parsed successfully and all files touched by this
 feature were checked for UTF-8 encoding without BOM. Tests mock engine/API
 boundaries; in-game context-menu focus/layout, courier return replication, and
 real backend net payouts remain unverified. No deployment was performed.
+
+Immersion update verification (2026-11-12):
+`npm exec --yes --package=fengari-node-cli -- fengari tests/wallet-market-client.lua`
+passes transcript retention beyond 12 messages, wrapping, automatic following,
+manual scroll preservation, layout rebuilding and the existing market-client
+request/retry/portrait checks. Native scrolling, handheld/ham readability and
+rendering beneath the user's radio overlay await in-game validation.

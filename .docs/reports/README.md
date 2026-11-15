@@ -17,6 +17,8 @@ in `../hotfixes/`. Update those documents when a report leads to a change.
 
 ## Investigations
 
+- [2026-11-14: Missing expired wallet listings](2026-11-14-wallet-expired-listings-investigation.md): reproduced sparse-load initialization errors and retained-cargo recovery conditions.
+
 - [2026-11-12: Wallet PostgreSQL CPU review](2026-11-12-wallet-postgres-cpu-review.md): source findings, attribution limits and read-only SQL capture.
 
 - [2026-10-20: Quest RPG UI and synchronization](2026-10-20-quest-rpg-ui-and-sync-investigation.md):

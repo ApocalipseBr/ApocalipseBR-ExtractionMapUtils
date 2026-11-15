@@ -8,7 +8,13 @@ local M={sessions={},nextUpdate=0,lastRequest={},lastStatus={}}
 ApocWallet.MarketService=M
 local function data()
     local d=Courier.data()
-    d.market=d.market or {seq=0,listings={},requests={},transactions={},credits={}}
+    d.market=d.market or {}
+    -- Empty collections have no SQL records and are absent after a cold load.
+    d.market.seq=d.market.seq or 0
+    d.market.listings=d.market.listings or {}
+    d.market.requests=d.market.requests or {}
+    d.market.transactions=d.market.transactions or {}
+    d.market.credits=d.market.credits or {}
     if not d.market.collecting then
         d.market.collecting={}; d.market.pendingTransactions={}; d.market.pendingCredits={}; d.market.openListings={}
         for id,l in pairs(d.market.listings) do

@@ -72,6 +72,8 @@ documents when designed. Mark proposals as planned until implemented.
 
 - [Wallet record mutations](hotfixes/wallet-record-mutations.md): targeted atomic persistence and zero SQL writes for unchanged payment admission retries.
 
+- [Unsold wallet listing expiry](hotfixes/wallet-unsold-listing-expiry.md): initialize absent collections after database reload so never-purchased stock reaches the expired view and recovery flow.
+
 - [Wallet loading, dispatch and diagnostics](hotfixes/wallet-loading-diagnostics.md): immediate per-player API admission, manual pending-intent retry and bounded client/server stage logs.
 
 - [Managed generator validation and pre-warm](hotfixes/managed-generator-validation-and-prewarm.md): exact coordinate rejection logs and explicit bounded map pre-warming before placement.
@@ -129,6 +131,8 @@ Targeted corrections and compatibility workarounds belong in `hotfixes/`.
   building guards after B42 registers the server Lua dependencies.
 
 ## Reports
+
+- [2026-11-14: Missing expired wallet listings](reports/2026-11-14-wallet-expired-listings-investigation.md): sparse SQL reload failure, character ownership, search filtering and retained-cargo inspection.
 
 - [2026-11-12: Wallet PostgreSQL CPU review](reports/2026-11-12-wallet-postgres-cpu-review.md): full-state projection costs, background retries and read-only production capture.
 

@@ -14,15 +14,20 @@ DroneCompanion technique: cached visual-only item instances, native
 `Render3DItem`, the support body and four independently rotating rotor meshes.
 The imported models/textures are credited in the asset provenance file.
 
-`CourierRoute.lua` performs a bounded cardinal grid search (625 visited nodes,
-12-tile approach), rejecting solid squares and blocked wall/door/window edges.
-The client interpolates the approach for eight seconds, hovers for two, then
-reverses the route for eight seconds and removes the visual. An enclosed target
+`CourierRoute.lua` performs a bounded cardinal grid search (1,301 visited nodes,
+24-tile approach), rejecting solid squares and blocked wall/door/window edges.
+The client interpolates the approach for eight seconds, hovers for two on
+delivery or three on pickup, then reverses the route for eight seconds and
+removes the visual. The doubled route distance doubles nominal horizontal speed
+(from 1.5 to 3 tiles/second) without changing delivery arrival timing. An enclosed target
 uses a vertical approach on its square. This is local visual navigation, not
 native actor/vehicle navigation, long-distance aviation or roof avoidance.
 Routes are planned once; subsequent changes to doors/obstacles are not replanned.
+When loaded/accessible geometry cannot reach 24 tiles, a route reaching at
+least the previous 12 tiles is retained before falling back to vertical.
 Only loaded client squares render. A missing drone render never prevents cargo.
 
+Pickup jobs choose an arrival 10-30 wall-clock seconds after scheduling.
 Delivery jobs choose an arrival 30–90 wall-clock seconds after scheduling.
 Compatible purchases at the same exact square and owner merge into a waiting
 drone before its approach begins. The first ETA stays fixed. Pickups likewise
@@ -31,6 +36,33 @@ rendezvous to the latest pickup square. Each accepted batch sends a translated
 ETA to the wallet radio log strip. The existing PTBR/default-language policy is
 preserved in EN/UI.json and PTBR/UI.json. Opening the radio later shows the latest
 message; courier sync refreshes outstanding ETAs every fifteen seconds.
+
+## Drone transmissions (2026-11-12)
+
+At a successful arrival/handoff, the server broadcasts one cosmetic
+`CourierTransmission` event containing job ID, kind, owner, coordinates and a
+sorted list of cargo codenames/counts. Pickup manifests are derived from existing
+`held`/`market` escrow records; delivery manifests come from existing job items.
+Repeated item types share a line with their total quantity. No native item blobs,
+listing IDs, prices, new persistent fields or database migrations are involved.
+Pickup custody, debit/credit, reservations, delivery placement and their existing
+request/response contracts are unchanged. The added event cannot authorize cargo.
+
+Clients show one translated line per cargo type for three wall-clock seconds,
+including the final line, with distinct pickup/dropoff wording. Positional squelch and a
+world-space caption originate at the drone's interpolated position. Open wallet
+sessions belonging to the owner also receive the line through native device text
+and their scrollable transcript. World captions/audio work without an open wallet;
+they do not inject a global frequency broadcast or attract zombies. The route and
+hover do not wait for long manifests: remaining lines continue during/after exit.
+Repeated event IDs are ignored until disconnect. Normal sync does not replay
+arrival announcements, and announcements are not persisted/replayed after restart.
+
+Engine signatures verified locally: `IsoWorld.getFreeEmitter(float,float,float)`
+(engine-owned one-shot emitter), exposed `TextDrawObject.ReadString/Draw`,
+`IsoUtils.XToScreen/YToScreen`, `IsoCamera` viewport/offset helpers and
+`Radio.AddDeviceText`. Projection, zoom, split-screen clipping, radio overlays and
+positional audio still require in-game validation.
 
 ## Trusted server interfaces
 
@@ -186,3 +218,26 @@ files part of the SQL commit.
 Still required: dedicated server/client model orientation and z-height, multiplayer
 render timing, item removal replication, offline/paused streaming, native item
 codec roundtrip with real customized items, orderly restart and backend integration.
+
+Validation for the 2026-11-12 immersion update: the courier service harness now
+covers unchanged delivery timing, pickup timing, the extra pickup hover second,
+multi-type manifests, server-derived codes/counts, absence of item blobs and
+non-replay on updates/sync. The courier client harness covers the longer route,
+three-second line spacing, owner transcript delivery, positional squelch, duplicate
+events and transmission cleanup. See the market guide for transcript checks.
+
+Results on 2026-11-12 (mocked engine boundaries): courier service 37 checks,
+courier client 19, market client 38, market service 70, entity-store suites 22 +
+35, radio UI 67, radio access 27 and wallet 96 passed; drone renderer and wallet
+translation validator passed. Commands use the `npm exec --yes
+--package=fengari-node-cli -- fengari tests/<suite>.lua` pattern above for
+`wallet-courier`, `wallet-courier-client`, `wallet-market-client`, `wallet-market`,
+`wallet-entity-store`, `wallet-radio-ui`, `wallet-radio-access`, `wallet`, and
+`wallet-drone-renderer`; translation command: `py -3 tests/wallet-translations.py`.
+`git diff --check` passed. No dedicated server/client run was performed.
+
+On 2026-11-14, drone messages changed to three seconds per line for readability.
+The client timing harness covers replacement at 3,000 ms and retention through
+2,999 ms, including the final pickup line and a single-line dropoff.
+`npm exec --yes --package=fengari-node-cli -- fengari tests/wallet-courier-client.lua`
+passed 22 checks with mocked engine boundaries. In-game readability awaits validation.

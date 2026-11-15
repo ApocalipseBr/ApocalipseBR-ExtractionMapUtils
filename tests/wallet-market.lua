@@ -261,4 +261,52 @@ time=time+1000; Purchase.update(); M.update()
 local successTx=M.data().transactions[successBuy.transaction]
 check(successTx.state=='complete' and success.units[1].state=='sold','pre-expiry reservation completes after deadline')
 check(successTx.fee==1 and M.data().credits[successTx.id].amount==18,'fractional fee rounds down to whole wallet credits')
+-- Investigation of missing expired listings with no purchase activity.
+command(seller,'MarketTune',{token='unsold-tune',radio={itemId=seller.radio.id}})
+seller:getInventory():add(item(60,nil,63)); seller:getInventory():add(item(61,nil,74))
+local unsoldPost=command(seller,'MarketPost',{token='never-purchased',itemIds={60,61},price=23})
+check(unsoldPost.kind=='posted','never-purchased investigation fixture posted')
+local unsold=M.data().listings[tostring(M.data().seq)]
+unsold.name='NeverPurchasedExpiryFixture'
+for _,tx in pairs(M.data().transactions) do check(tx.listingId~=unsold.id,'fixture has no purchase transaction') end
+time=unsold.expiresAt; M.nextUpdate=0; M.update()
+check(unsold.state=='expired' and unsold.units[1].state=='available' and unsold.units[2].state=='available',
+    'all unsold units expire without buyer activity')
+-- SQL has no records for empty collections in a market that has never had a buyer.
+persistent.market={seq=tonumber(unsold.id),listings={[unsold.id]=unsold},requests={['never-purchased']=unsold.id}}
+package.loaded['ApocWallet/MarketService']=nil; ApocWallet.MarketService=nil
+M=require 'ApocWallet/MarketService'
+command(seller,'MarketTune',{token='unsold-reload',radio={itemId=seller.radio.id}})
+local visible=command(seller,'MarketPage',{token='unsold-visible',mode='expired',page=1,query=unsold.name})
+check(#visible.rows==1 and visible.rows[1].id==unsold.id and visible.rows[1].count==2,
+    'canonical expired listing rebuilds its index and is visible without any purchase')
+local hidden=command(seller,'MarketPage',{token='unsold-filtered',mode='expired',page=1,query='different item'})
+check(#hidden.rows==0,'a carried-over name search can hide retained expired stock')
+local originalCharacter=ApocBRModEntities.character
+ApocBRModEntities.character=function(p)
+    local c=originalCharacter(p)
+    if p==seller then c.characterId='12345678-1234-4234-8234-999999999999' end
+    return c
+end
+command(seller,'MarketTune',{token='new-life-tune',radio={itemId=seller.radio.id}})
+local newLife=command(seller,'MarketPage',{token='new-life-page',mode='expired',page=1,query=unsold.name})
+check(#newLife.rows==0,'same username and Steam ID with a new character UUID cannot see old-life stock')
+local denied=command(seller,'MarketRecover',{token='new-life-recover',listingId=unsold.id})
+check(denied.error=='ITEM' and unsold.units[1].state=='available','old-life cargo remains held when recovery ownership fails')
+ApocBRModEntities.character=originalCharacter
+command(seller,'MarketTune',{token='original-life-tune',radio={itemId=seller.radio.id}})
+local unsoldReturn=command(seller,'MarketRecover',{token='unsold-return',listingId=unsold.id})
+local returnedJob=persistent.jobs[unsoldReturn.jobId]
+check(unsoldReturn.kind=='recovered' and returnedJob.items[1].blob=='60:63' and returnedJob.items[2].blob=='61:74',
+    'original character recovers both never-purchased native item blobs')
+check(M.data().listings[unsold.id]==unsold and persistent.escrow[unsold.escrow].state=='market',
+    'listing and original escrow history remain retained after recovery')
+-- A buyer may have reserved stock without any completed sale/credit history.
+persistent.market={seq=tonumber(unsold.id),listings={[unsold.id]=unsold},transactions={
+    pending={state='reserved',listingId=unsold.id}}}
+local withoutCredits=M.data()
+check(withoutCredits.pendingTransactions.pending and next(withoutCredits.credits)==nil,
+    'transaction history without seller credits reconstructs its pending queue')
+check(next(withoutCredits.requests)==nil and withoutCredits.seq==tonumber(unsold.id),
+    'missing canonical collections receive defaults while the stored sequence survives')
 print('Passed '..checks..' production market ownership, custody, purchase, settlement and radio checks.')

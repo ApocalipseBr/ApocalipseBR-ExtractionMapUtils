@@ -3,10 +3,12 @@ if isClient() then return end
 require "ApocWallet/Protocol"
 if ApocWallet.CourierService then return ApocWallet.CourierService end
 local Route=require "ApocWallet/CourierRoute"
+local MarketProtocol=require "ApocWallet/MarketProtocol"
 local Store=require "ApocWallet/EntityStore"
 local Service={ nextUpdate=0 }
 ApocWallet.CourierService=Service
 local APPROACH,HOVER,DEPART=8000,2000,8000
+local function hover(job) return job.kind=='pickup' and HOVER+1000 or HOVER end
 local function now() return getTimestampMs() end
 local function data()
     local d=Store.data()
@@ -32,7 +34,32 @@ end
 Service.capture=coords
 local function packet(job)
     return {id=job.id,kind=job.kind,x=job.x,y=job.y,z=job.z,due=job.due,
-        path=job.path,vertical=job.vertical,serverNow=now(),approach=APPROACH,hover=HOVER,depart=DEPART}
+        path=job.path,vertical=job.vertical,serverNow=now(),approach=APPROACH,hover=hover(job),depart=DEPART}
+end
+-- Presentation only: derive the manifest from existing authoritative custody.
+-- Never include native item blobs or change the durable job/escrow schema.
+local function announce(job)
+    local counts={}
+    local function add(fullType,count)
+        if fullType then counts[fullType]=(counts[fullType] or 0)+count end
+    end
+    if job.kind=='pickup' then
+        for _,entry in pairs(data().escrow) do
+            if entry.jobId==job.id and (entry.state=='held' or entry.state=='market') then
+                for _,item in ipairs(entry.items) do add(item.type,1) end
+            end
+        end
+    else
+        for _,item in ipairs(job.items) do add(item.type,item.count) end
+    end
+    local types,lines={},{}
+    for fullType in pairs(counts) do types[#types+1]=fullType end
+    table.sort(types)
+    for _,fullType in ipairs(types) do lines[#lines+1]={code=MarketProtocol.code(fullType),count=counts[fullType]} end
+    if #lines>0 then
+        sendServerCommand('ApocWallet','CourierTransmission',{id=job.id,kind=job.kind,
+            owner=job.owner,x=job.x+0.5,y=job.y+0.5,z=job.z,lines=lines})
+    end
 end
 function Service.broadcast(job)
     sendServerCommand('ApocWallet','CourierFlight',packet(job))
@@ -108,7 +135,7 @@ local function pickupJob(player)
     end
     d.seq=d.seq+1
     local job={id=tostring(d.seq),kind='pickup',owner=user,x=position.x,y=position.y,z=position.z,
-        due=now()+ZombRand(30000,90001),state='waiting',items={},placed=0}
+        due=now()+ZombRand(10000,30001),state='waiting',items={},placed=0}
     d.jobs[job.id]=job
     return job
 end
@@ -244,9 +271,10 @@ function Service.update()
                     handoffs=handoffs+1
                     if job.kind=='pickup' or deliver(job,square) then
                         job.state='departing'; persist('jobs',job.id); Service.broadcast(job)
+                        announce(job)
                     end
                 end
-                if job.state=='departing' and t>=job.due+HOVER+DEPART then
+                if job.state=='departing' and t>=job.due+hover(job)+DEPART then
                     local d=data()
                     d.finished[job.id]={kind=job.kind,x=job.x,y=job.y,z=job.z,completedAt=t}
                     d.jobs[job.id]=nil; persist('jobs',job.id,'finished',job.id)

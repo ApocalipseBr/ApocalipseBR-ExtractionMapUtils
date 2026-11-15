@@ -4,26 +4,30 @@ if ApocWallet.CourierRoute then return ApocWallet.CourierRoute end
 local Route = {}
 ApocWallet.CourierRoute = Route
 local function key(x,y) return x .. ':' .. y end
+local function pathTo(node)
+    local path={}
+    while node do
+        path[#path+1]={x=node.x+0.5,y=node.y+0.5}
+        node=node.parent
+    end
+    return path
+end
 function Route.plan(cell, x, y, z)
     local goal = cell:getGridSquare(x,y,z)
     if not goal then return nil end
     local queue,seen,head={{x=x,y=y}},{[key(x,y)]=true},1
+    local farthest,distance=nil,0
     -- Search outward from the destination, keeping parent links toward it.
-    while head<=#queue and head<=625 do
+    while head<=#queue and head<=1301 do
         local node=queue[head]; head=head+1
-        if math.abs(node.x-x)+math.abs(node.y-y)>=12 then
-            local path={}
-            while node do
-                path[#path+1]={x=node.x+0.5,y=node.y+0.5}
-                node=node.parent
-            end
-            return path
-        end
+        local radius=math.abs(node.x-x)+math.abs(node.y-y)
+        if radius>distance then farthest,distance=node,radius end
+        if radius>=24 then return pathTo(node) end
         local sq=cell:getGridSquare(node.x,node.y,z)
         for _,d in ipairs({{1,0},{0,1},{-1,0},{0,-1}}) do
             local nx,ny=node.x+d[1],node.y+d[2]
             local k=key(nx,ny)
-            if not seen[k] and math.abs(nx-x)<=12 and math.abs(ny-y)<=12 then
+            if not seen[k] and math.abs(nx-x)<=24 and math.abs(ny-y)<=24 then
                 seen[k]=true
                 local nextSq=cell:getGridSquare(nx,ny,z)
                 if nextSq and not nextSq:isSolid() and not sq:isBlockedTo(nextSq)
@@ -33,6 +37,8 @@ function Route.plan(cell, x, y, z)
             end
         end
     end
+    -- Limited loaded geometry can still support the previous local approach.
+    if distance>=12 then return pathTo(farthest) end
     -- Enclosed targets still receive goods. A vertical approach stays on their
     -- loaded square instead of inventing a route through a wall.
     return {{x=x+0.5,y=y+0.5},{x=x+0.5,y=y+0.5}}, true
