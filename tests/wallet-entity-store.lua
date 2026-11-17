@@ -1,4 +1,6 @@
 local root='ApocalipseBR-Wallet/common/media/lua/'
+-- Courier startup must remain compatible with the deployed Kahlua environment.
+next=nil
 package.path=root..'shared/?.lua;'..root..'server/?.lua;C:/Users/ricar/Zomboid/Workshop/apocbr/Contents/mods/ApocalisebrPack/42.14/media/lua/server/?.lua;'..package.path
 local checks,time,sequence=0,100000,0
 local function check(v,m) checks=checks+1; assert(v,m) end
@@ -120,6 +122,15 @@ ApocBrApiBridge={encodeItem=function()return 'native-item-blob' end}
 function getOnlinePlayers()return {size=function()return 0 end}end
 function sendRemoveItemFromContainer()end
 local Courier=require 'ApocWallet/CourierService'
+-- A courier startup error blocks the same queue that admits MarketTune.
+function getCell() return nil end
+S.run('courier-startup',Courier.update)
+tick()
+local admitted,admissionError=false,nil
+S.run('market-after-courier',function() admitted=true end,function(error) admissionError=error end)
+tick()
+check(S.ready() and admitted and not admissionError,
+    'courier startup without next() leaves shared persistence ready for market commands')
 local result,reason
 S.run('race-pickup',function()result,reason=Courier.pickup(player,'race',{item})end)
 tick();check(removed==0,'pickup does not remove before SQL write-ahead acknowledgment')

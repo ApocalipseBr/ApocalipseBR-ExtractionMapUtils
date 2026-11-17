@@ -35,7 +35,52 @@ merge by owner before approach; a subsequent pickup updates that cosmetic
 rendezvous to the latest pickup square. Each accepted batch sends a translated
 ETA to the wallet radio log strip. The existing PTBR/default-language policy is
 preserved in EN/UI.json and PTBR/UI.json. Opening the radio later shows the latest
-message; courier sync refreshes outstanding ETAs every fifteen seconds.
+message. Accepted purchase/posting batches push owner ETAs directly.
+
+## Location-scoped push updates (2026-11-16)
+
+Status implemented, regression harnesses passed, dedicated-server validation pending.
+
+Clients no longer send `CourierSync`. Its command handler, fifteen-second timer
+and full-job sync function have been removed. At approach start, eight seconds
+before the job deadline, the server sends one `CourierFlight` packet to each
+online player within 64 tiles on both X and Y axes of the destination. This
+horizontal square covers the 24-tile route and 40-tile caption range. Recipient
+selection uses current server-side player coordinates and includes other floors.
+The implementation uses the exposed `getOnlinePlayers()` and targeted
+`sendServerCommand(player, module, command, args)` Lua APIs. This range is a wallet
+visibility rule rather than the engine's connection/chunk relevance predicate.
+
+The flight packet contains the complete approach, hover and departure schedule.
+Handoff does not resend the flight. Cargo announcements independently use the
+same horizontal filter at successful handoff. There is no periodic visual state
+replay for clients entering the area or connecting after the approach event.
+An active persisted route resumes with one nearby event after a server/Lua
+restart. Fulfillment still uses the server deadline and can complete with zero
+connected clients.
+
+Interrupted `removing` escrow is indexed by owner once after persistence loads.
+The server retries recovery every five seconds while those owners remain
+unresolved, waiting for their online character identity. Resolved owners leave
+that pending set. This recovery uses the existing serialized store update flow
+and generates no client requests. Posting retries retain their existing direct
+reconciliation behavior.
+
+The [Kahlua recovery hotfix](../hotfixes/wallet-courier-recovery-kahlua.md) replaces
+the unavailable `next()` call with a pending-owner count. Tests now disable that
+global and verify that courier startup preserves market queue admission.
+
+Affected files are `CourierClient.lua`, `CourierController.lua` and
+`CourierService.lua` under the wallet's client/server `ApocWallet` Lua folders.
+The courier client and service harnesses cover removal of idle requests,
+near/far X/Y recipients, one flight event through handoff, local animation,
+unattended fulfillment, restart replay and identity-delayed escrow recovery.
+Commands use `npm exec --yes --package=fengari-node-cli -- fengari
+tests/<suite>.lua`. Results on 2026-11-16 with mocked engine boundaries were
+`wallet-courier` 49 checks, `wallet-courier-client` 24, `wallet-market` 96,
+`wallet-market-client` 46, and `wallet-entity-store` 22 + 40. All passed.
+`git diff --check` passed. Live multiplayer validation remains for relevant
+recipient coverage, client reload, local flight timing and paused/offline delivery.
 
 ## Drone transmissions (2026-11-12)
 
@@ -55,8 +100,8 @@ sessions belonging to the owner also receive the line through native device text
 and their scrollable transcript. World captions/audio work without an open wallet;
 they do not inject a global frequency broadcast or attract zombies. The route and
 hover do not wait for long manifests: remaining lines continue during/after exit.
-Repeated event IDs are ignored until disconnect. Normal sync does not replay
-arrival announcements, and announcements are not persisted/replayed after restart.
+Repeated event IDs are ignored until disconnect. Arrival announcements are sent
+at successful handoff and are not persisted/replayed after restart.
 
 Engine signatures verified locally: `IsoWorld.getFreeEmitter(float,float,float)`
 (engine-owned one-shot emitter), exposed `TextDrawObject.ReadString/Draw`,

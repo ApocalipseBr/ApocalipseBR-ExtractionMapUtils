@@ -2,7 +2,11 @@ local root='ApocalipseBR-Wallet/common/media/lua/'
 package.path=root..'shared/?.lua;'..root..'client/?.lua;'..package.path
 local checks,time,draws=0,1000,{}
 local function check(v,m) checks=checks+1; assert(v,m) end
-local function event() return {Add=function() end} end
+local function event()
+    local callbacks={}
+    return {Add=function(fn) callbacks[#callbacks+1]=fn end,
+        fire=function(...) for _,fn in ipairs(callbacks) do fn(...) end end}
+end
 Events={OnServerCommand=event(),OnPostRender=event(),OnTick=event(),OnDisconnect=event()}
 function isServer() return false end
 function getTimestampMs() return time end
@@ -79,4 +83,10 @@ time=time+2999; C.updateTransmissions()
 check(C.transmissions.drop and C.transmissions.drop.text,'single dropoff message stays visible for three seconds')
 time=time+1; C.updateTransmissions()
 check(not C.transmissions.drop,'single dropoff message clears after three seconds')
+local requests=0
+function sendClientCommand() requests=requests+1 end
+for i=1,100 do time=time+15000; Events.OnTick.fire() end
+check(requests==0,'idle and active clients never poll courier state')
+Events.OnDisconnect.fire()
+check(next(C.flights)==nil and next(C.transmissions)==nil,'disconnect clears local courier presentation')
 print('Passed '..checks..' courier client timing, approach/departure, ETA and path checks.')

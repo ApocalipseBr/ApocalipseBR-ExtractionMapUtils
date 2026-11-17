@@ -5,7 +5,11 @@ if ApocWallet.CourierService then return ApocWallet.CourierService end
 local Route=require "ApocWallet/CourierRoute"
 local MarketProtocol=require "ApocWallet/MarketProtocol"
 local Store=require "ApocWallet/EntityStore"
-local Service={ nextUpdate=0 }
+local Service={ nextUpdate=0, RELEVANCE_RADIUS=64 }
+local recoveryOwners
+local pendingRecoveries=0
+local nextRecovery=0
+local announcedFlights={}
 ApocWallet.CourierService=Service
 local APPROACH,HOVER,DEPART=8000,2000,8000
 local function hover(job) return job.kind=='pickup' and HOVER+1000 or HOVER end
@@ -36,6 +40,17 @@ local function packet(job)
     return {id=job.id,kind=job.kind,x=job.x,y=job.y,z=job.z,due=job.due,
         path=job.path,vertical=job.vertical,serverNow=now(),approach=APPROACH,hover=hover(job),depart=DEPART}
 end
+local function sendNearby(job,command,args)
+    local players=getOnlinePlayers()
+    for i=0,players:size()-1 do
+        local player=players:get(i)
+        -- Cover the 24-tile route and the 40-tile caption range, across floors.
+        if math.abs(player:getX()-job.x)<=Service.RELEVANCE_RADIUS
+            and math.abs(player:getY()-job.y)<=Service.RELEVANCE_RADIUS then
+            sendServerCommand(player,'ApocWallet',command,args)
+        end
+    end
+end
 -- Presentation only: derive the manifest from existing authoritative custody.
 -- Never include native item blobs or change the durable job/escrow schema.
 local function announce(job)
@@ -57,12 +72,12 @@ local function announce(job)
     table.sort(types)
     for _,fullType in ipairs(types) do lines[#lines+1]={code=MarketProtocol.code(fullType),count=counts[fullType]} end
     if #lines>0 then
-        sendServerCommand('ApocWallet','CourierTransmission',{id=job.id,kind=job.kind,
+        sendNearby(job,'CourierTransmission',{id=job.id,kind=job.kind,
             owner=job.owner,x=job.x+0.5,y=job.y+0.5,z=job.z,lines=lines})
     end
 end
 function Service.broadcast(job)
-    sendServerCommand('ApocWallet','CourierFlight',packet(job))
+    sendNearby(job,'CourierFlight',packet(job))
 end
 function Service.notify(user, job)
     local list=getOnlinePlayers()
@@ -251,11 +266,36 @@ local function deliver(job,square)
     end
     return finish(true)
 end
+local function recoverPickups(t)
+    -- Build the pending recovery set once after persistence loads. Completed
+    -- historical escrow never becomes recurring per-player work.
+    if not recoveryOwners then
+        recoveryOwners={}
+        for _,entry in pairs(data().escrow) do
+            if entry.state=='removing' and not recoveryOwners[entry.owner] then
+                recoveryOwners[entry.owner]=true
+                pendingRecoveries=pendingRecoveries+1
+            end
+        end
+    end
+    if pendingRecoveries==0 or t<nextRecovery then return end
+    nextRecovery=t+5000
+    local players=getOnlinePlayers()
+    for i=0,players:size()-1 do
+        local player=players:get(i)
+        local user=owner(player)
+        if recoveryOwners[user] and Service.reconcilePickup(player) then
+            recoveryOwners[user]=nil
+            pendingRecoveries=pendingRecoveries-1
+        end
+    end
+end
 function Service.update()
     local t=now()
     if t<Service.nextUpdate then return end
     Service.nextUpdate=t+250
     if not Service.persistenceReady() then return end
+    recoverPickups(t)
     if not getCell() then return end
     local streamed,routes,handoffs=0,0,0
     for _,job in pairs(data().jobs) do
@@ -267,12 +307,15 @@ function Service.update()
                 if not job.path and routes<2 then
                     routes=routes+1
                     job.path,job.vertical=Route.plan(getCell(),job.x,job.y,job.z)
+                end
+                if job.path and not announcedFlights[job.id] and t<job.due+hover(job)+DEPART then
                     Service.broadcast(job)
+                    announcedFlights[job.id]=true
                 end
                 if t>=job.due and job.state=='waiting' and handoffs<2 then
                     handoffs=handoffs+1
                     if job.kind=='pickup' or deliver(job,square) then
-                        job.state='departing'; persist('jobs',job.id); Service.broadcast(job)
+                        job.state='departing'; persist('jobs',job.id)
                         announce(job)
                     end
                 end
@@ -280,23 +323,18 @@ function Service.update()
                     local d=data()
                     d.finished[job.id]={kind=job.kind,x=job.x,y=job.y,z=job.z,completedAt=t}
                     d.jobs[job.id]=nil; persist('jobs',job.id,'finished',job.id)
+                    announcedFlights[job.id]=nil
                 end
             end
         end
     end
 end
-function Service.sync(player)
-    for _,job in pairs(data().jobs) do
-        if job.state~='complete' and job.path then sendServerCommand(player,'ApocWallet','CourierFlight',packet(job)) end
-        if job.state~='complete' and job.owner==owner(player) then Service.notify(owner(player),job) end
-    end
-end
 -- Recover the write-ahead custody record if the JVM stopped during removal.
 -- Never expose 'removing' escrow to a market publisher as a completed post.
 function Service.reconcilePickup(player)
-    if not Service.persistenceReady() then return end
+    if not Service.persistenceReady() then return false end
     local context=ApocBRModEntities and ApocBRModEntities.character(player)
-    if not context or context.status~='OK' then return end
+    if not context or context.status~='OK' then return false end
     for receipt,entry in pairs(data().escrow) do
         if entry.state=='removing' and entry.characterId==context.characterId then
             local verified={}
@@ -323,5 +361,6 @@ function Service.reconcilePickup(player)
             persist('escrow',receipt)
         end
     end
+    return true
 end
 return Service

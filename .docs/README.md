@@ -7,6 +7,8 @@ integration. Repository conventions live in [AGENTS.md](../AGENTS.md).
 
 ## Features
 
+- [Courier recovery startup hotfix](hotfixes/wallet-courier-recovery-kahlua.md): fixes the unavailable `next()` call that blocked market persistence after polling removal.
+
 - [Wallet entity persistence](features/wallet-entity-persistence.md): pack dependency, scoped game_runtime.mod_data mapping, atomic market projections and asynchronous trade checkpoints.
 
 - [Wallet native-save hotfix](hotfixes/wallet-native-moddata-save.md): fixes the unexposed Lua save call, interrupted-post recovery and misleading unavailable-cargo responses.
@@ -15,7 +17,7 @@ integration. Repository conventions live in [AGENTS.md](../AGENTS.md).
 
 - [Market operators and server gossip](features/wallet-market-operators.md): SPARKS/IRON ECHO, slow portrait snapshots, retained ten-minute contacts, server rule registration, coded bulletins and database-loaded PTBR response pools.
 
-- [Wallet courier pickup and delivery](features/wallet-courier-delivery.md): ported drone visuals, batched immediate inventory pickup, persistent offline delivery and the proposed backend debit contract.
+- [Wallet courier pickup and delivery](features/wallet-courier-delivery.md): location-scoped drone push events, batched immediate inventory pickup, persistent offline delivery and the proposed backend debit contract.
 
 - [Wallet-owned skinned radio UI](features/wallet-radio-ui.md): independent handheld/ham windows, 34 skins, native walk-to-radio access, empty list and callback-driven balance display.
 

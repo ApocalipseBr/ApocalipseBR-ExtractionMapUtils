@@ -1,4 +1,6 @@
 local root='ApocalipseBR-Wallet/common/media/lua/'
+-- Match the deployed Kahlua globals. Standard Lua's next() concealed a startup failure.
+next=nil
 package.path=root..'shared/?.lua;'..root..'server/?.lua;'..package.path
 local checks,time,saves,packets,world,loaded,created=0,100000,0,{}, {},true,0
 local randomBounds={}
@@ -14,9 +16,17 @@ package.loaded['ApocWallet/EntityStore']={data=function() return persisted end,r
  run=function(_,fn,onError) local ok,err=pcall(fn); if not ok then if onError then onError(err) else error(err) end end end}
 ModData={getOrCreate=function() return persisted end}
 ApocBrApiBridge={}
-function sendServerCommand(...) packets[#packets+1]={...} end
+local recipients={}
+function sendServerCommand(player,module,command,args)
+    assert(type(player)=='table','courier packets must target individual nearby clients or the owner')
+    packets[#packets+1]={module,command,args}
+    recipients[#recipients+1]=player
+end
 local function list(t) return {size=function() return #t end,get=function(_,i) return t[i+1] end} end
-local online={}
+local nearby={getX=function() return 10 end,getY=function() return 20 end,getUsername=function() return 'spectator' end}
+local farX={getX=function() return 1000 end,getY=function() return 20 end,getUsername=function() return 'far-x' end}
+local farY={getX=function() return 10 end,getY=function() return 1000 end,getUsername=function() return 'far-y' end}
+local online={nearby,farX,farY}
 function getOnlinePlayers() return list(online) end
 local square={getX=function() return 10 end,getY=function() return 20 end,getZ=function() return 0 end}
 function square:getWorldObjects() return list(world) end
@@ -67,6 +77,7 @@ loaded=false; C.update()
 check(loads==1 and #world==0,'offline unloaded square requested without early cargo')
 loaded=true; time=time+250; C.update()
 check(#persisted.jobs[id].path>1 and #world==0,'approach starts before cargo')
+check(#packets==1 and packets[1][2]=='CourierFlight' and recipients[1]==nearby,'one approach event targets only nearby X/Y recipients')
 time=persisted.jobs[id].due; failCreate=true; C.update()
 check(#world==0 and persisted.jobs[id].state=='waiting','failed creation retained for retry')
 failCreate=false; failAt=1; time=time+250; C.update()
@@ -80,12 +91,19 @@ for _,p in ipairs(packets) do if p[2]=='CourierTransmission' then deliveryManife
 check(deliveryManifest and #deliveryManifest.lines==2,'batched dropoff has separate cargo entries')
 check(deliveryManifest.lines[1].code==ApocWallet.MarketProtocol.code('Base.Axe') and deliveryManifest.lines[1].count==2,'dropoff codes and quantities derived server-side')
 check(not deliveryManifest.lines[1].blob and not deliveryManifest.lines[1].type,'cosmetic manifest has no item blobs or type payload')
+local flightCount=0
+for i,p in ipairs(packets) do
+    if p[2]=='CourierFlight' then flightCount=flightCount+1 end
+    check(recipients[i]==nearby,'distant players receive neither flight nor manifest')
+end
+check(flightCount==1,'handoff uses the original visual schedule without a second flight packet')
 time=time+250; C.update(); check(#world==3,'no repeat on next tick')
 -- Simulated Lua reload keeps durable receipts and progress, no online player.
 package.loaded['ApocWallet/CourierService']=nil
 ApocWallet.CourierService=nil
 C=require 'ApocWallet/CourierService'; C.update()
 check(#world==3,'restart retains placement progress')
+check(packets[#packets][2]=='CourierFlight','restart resumes a persisted active flight with one nearby event')
 time=time+10000; C.update(); check(persisted.jobs[id]==nil and persisted.finished[id],'departure completed and active job retired')
 local removed=0
 local inv={getOutermostContainer=function(self) return self end}
@@ -123,10 +141,10 @@ check(pickupManifest and #pickupManifest.lines==2 and pickupManifest.lines[1].co
 check(flight.hover==3000 and flight.approach==8000 and flight.depart==8000,'pickup waits one extra second and traverses farther in the same time')
 local transmissions=0
 for _,p in ipairs(packets) do if p[2]=='CourierTransmission' then transmissions=transmissions+1 end end
-time=time+250; C.update(); C.sync(player)
+time=time+250; C.update()
 local afterTransmissions=0
 for _,p in ipairs(packets) do if p[2]=='CourierTransmission' then afterTransmissions=afterTransmissions+1 end end
-check(afterTransmissions==transmissions,'updates and sync do not replay cargo announcements')
+check(afterTransmissions==transmissions,'updates do not replay cargo announcements')
 -- Purchase API succeeds after disconnect and moving the original player.
 ApocBRModEntities={character=function() return {status='OK',characterId='12345678-1234-4234-8234-123456789abc',
     steamId='76561198000000001',sourceServerId=2} end}
@@ -171,4 +189,44 @@ check(persisted.purchases[retry].state=='pending','stale attempt cannot finish a
 callbacks.request4({requestId='request4',ok=true,idempotencyKey=retry,transactionId='tx3'})
 time=time+1000; P.update()
 check(persisted.purchases[retry].state=='fulfilled','matching replay receipt schedules delivery')
+online={}
+persisted.jobs={}
+local unattended=C.delivery('alice','unattended',{x=10,y=20,z=0},{{type='Base.Axe',count=1}})
+local groundBefore,packetsBefore=#world,#packets
+time=persisted.jobs[unattended].due
+C.update()
+check(#world==groundBefore+1 and persisted.jobs[unattended].state=='departing','server fulfills delivery with no connected clients')
+check(#packets==packetsBefore,'an empty relevance area generates no courier network packets')
+-- Restart recovery runs on the server even when clients send no commands.
+persisted.jobs={}
+local recoveryItem=inventoryItem(99)
+function inv:getItemById(id) if id==99 then return recoveryItem end end
+persisted.escrow.restart={owner='alice',characterId='12345678-1234-4234-8234-123456789abc',
+    state='removing',items={{itemId=99,blob='native-save-99',type='Base.Axe'}}}
+package.loaded['ApocWallet/CourierService']=nil
+ApocWallet.CourierService=nil
+C=require 'ApocWallet/CourierService'
+time=time+5000; C.update()
+check(persisted.escrow.restart.state=='removing','offline pickup recovery waits for its owner')
+online={player}
+local identityReady=false
+ApocBRModEntities.character=function()
+    return {status=identityReady and 'OK' or 'IDENTITY_PENDING',characterId='12345678-1234-4234-8234-123456789abc'}
+end
+time=time+5000; C.update()
+check(persisted.escrow.restart.state=='removing','server recovery waits for authoritative identity')
+identityReady=true
+local beforeRecovery=removed
+time=time+5000; C.update()
+check(persisted.escrow.restart.state=='held' and removed==beforeRecovery+1,'server recovers interrupted escrow without a client sync')
+local onlineScans=0
+function getOnlinePlayers() onlineScans=onlineScans+1; return list(online) end
+time=time+5000; C.update()
+check(onlineScans==0 and removed==beforeRecovery+1,'completed recovery does not keep scanning online players')
+local handlers={}
+function isServer() return true end
+Events={OnClientCommand={Add=function() error('courier must not register a client polling handler') end},
+    OnTick={Add=function(fn) handlers.tick=fn end},OnTickEvenPaused={Add=function(fn) handlers.paused=fn end}}
+require 'ApocWallet/CourierController'
+check(handlers.tick and handlers.paused and C.sync==nil,'controller keeps autonomous fulfillment and removes sync command routing')
 print('Passed '..checks..' wallet courier persistence, batching, pickup, offline streaming and purchase checks.')

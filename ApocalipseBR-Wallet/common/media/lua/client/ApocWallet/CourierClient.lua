@@ -2,7 +2,7 @@ if isServer() then return end
 local Renderer=require 'ApocWallet/DroneRenderer'
 local Route=require 'ApocWallet/CourierRoute'
 if ApocWallet.CourierClient then return ApocWallet.CourierClient end
-local Client={flights={},latestByPlayer={},nextSync=0,transmissions={},heard={}}
+local Client={flights={},latestByPlayer={},transmissions={},heard={}}
 ApocWallet.CourierClient=Client
 local function transmissionPosition(message)
     local f=Client.flights[message.id]
@@ -87,7 +87,7 @@ Events.OnServerCommand.Add(function(module,command,args)
     if module=='ApocWallet' then Client.receive(command,args) end
 end)
 Events.OnDisconnect.Add(function()
-    Client.flights={}; Client.latestByPlayer={}; Client.nextSync=0
+    Client.flights={}; Client.latestByPlayer={}
     Client.transmissions={}; Client.heard={}
 end)
 function Client.render()
@@ -122,10 +122,5 @@ Events.OnPostRender.Add(function()
 end)
 Events.OnTick.Add(function()
     Client.updateTransmissions()
-    local t=getTimestampMs()
-    if t<Client.nextSync then return end
-    Client.nextSync=t+15000
-    local player=getSpecificPlayer(0)
-    if player and player:getOnlineID()>=0 then sendClientCommand(player,'ApocWallet','CourierSync',{}) end
 end)
 return Client
