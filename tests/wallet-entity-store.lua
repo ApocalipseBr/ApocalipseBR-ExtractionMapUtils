@@ -239,4 +239,43 @@ check(restored.expiredListings['1'] and not restored.openListings['1']
     'expiry reconstructs the expired index and retains native cargo after reload')
 check(ApocBRModEntities.decode(database['market.listings:1'].payload).value.state=='expired',
     'expiry of never-purchased stock commits to its canonical database record')
+
+local publicId='market-'..string.rep('a',32)
+local remotePayload=ApocBRModEntities.encode({value={id='1',units={{state='available',blob='portable'}}}})
+local function remoteRead()
+    local request=table.remove(requests,1)
+    check(request and request.name=='ApocWallet.MarketListing.'..publicId,'listing read uses the global ID')
+    responses[#responses+1]={id=request.id,status='OK',payload=remotePayload,checksum='v0',foreign=true,now=time}
+    tick()
+end
+local conflictReason
+S.shared=true
+local function reserve()
+    local listing,_,foreign=S.marketListing(publicId)
+    check(foreign and listing.id==publicId,'global listing is loaded with detached source scope')
+    listing.units[1].state='reserved'
+    S.data().market.transactions={remote={id='remote'}}
+    S.beforeMarketBuy(publicId)
+    S.persist('market.listings',publicId,'market.transactions','remote')
+    effects=effects+1
+end
+S.run('remote-conflict',reserve,function(reason) conflictReason=reason end)
+tick();remoteRead()
+local write=requests[1]
+local listingOp
+for _,op in ipairs(write.operations) do if op.collection=='market.listings' then listingOp=op end end
+check(listingOp.marketExpected=='v0' and listingOp.marketBuy and #write.operations==2,
+    'reservation sends the observed listing version and local intent as one mutation')
+local beforeRemote=effects
+ack('MARKET_CONFLICT');tick()
+check(conflictReason=='MARKET_CONFLICT' and effects==beforeRemote and S.ready()
+    and not S.data().market.transactions.remote and not S.data().market.listings[publicId],
+    'a concurrent market change rolls back without blocking the local wallet or authorizing a debit')
+S.run('remote-retry',reserve)
+tick();remoteRead()
+local request=table.remove(requests,1)
+responses[#responses+1]={id=request.id,status='OK',revision=tostring(revision+1),marketVersions={[publicId]='v1'}}
+tick()
+check(effects==beforeRemote+1 and S.data().market.transactions.remote and not S.data().market.listings[publicId],
+    'a fresh committed reservation releases its local continuation and evicts the foreign blob')
 print('Passed '..checks..' mutation store, bounded-write and recovery checks.')

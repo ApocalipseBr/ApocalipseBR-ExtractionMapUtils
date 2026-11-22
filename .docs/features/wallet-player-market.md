@@ -124,8 +124,9 @@ and separate collecting listings, open listings,
 unsettled purchases and unpaid credits from retained history. Up to four listing
 recoveries and four transaction reconciliations run per update, with one seller
 credit admission attempt. The existing purchase/courier capacities remain; open
-plus collecting listings are capped at 2048. This market belongs to the current
-server world/save; it is not a cross-server listing database.
+plus collecting listings in the legacy local market are capped at 2048.
+With V60 the bulletin is shared while courier and payment work remain tied
+to the requesting world. See [cross-server player market](wallet-cross-server-market.md).
 
 Post/buy retries use the same client token. Business intent mutations commit
 before removal/payment; unchanged HTTP admission retries issue no SQL writes. Reservations that survive a restart before debit admission can
@@ -161,7 +162,12 @@ press **Gerenciar** to choose:
 - **Republicar por 48h**: publish the remaining units at the existing unit price
   for another full 48 hours, without another pickup or an upfront fee.
 
-Only the listing's server-derived seller character can see/manage expired stock.
+In shared mode the seller's server-derived Steam account can see and manage
+expired stock. The legacy local market uses the seller's character ID.
+After a successful repost or recovery, the client automatically refreshes the
+current expired page and preserves its search filter. Automatic refreshes wait
+350 ms after acknowledgment and retry silently if server admission returns
+`WAIT`; see the [refresh hotfix](../hotfixes/wallet-repost-expired-refresh.md).
 Expired items remain in custody indefinitely until managed; no inventory is
 silently destroyed. Outstanding buyer reservations must settle before the seller
 can manage that listing. Purchases reserved before expiry may finish afterward;
@@ -170,7 +176,7 @@ Sold or returned units cannot be reclaimed. Return intents, courier receipts and
 repost acknowledgments are persisted, and same-token retries cannot duplicate
 items or repeatedly extend a listing's deadline. Pending returns resume on the
 server after restart without needing a connected seller, including courier-queue
-backpressure. Reposts respect the existing 2048 active-listing limit.
+backpressure. The legacy local market limits active listings to 2048.
 
 On completed sales the buyer pays the listed gross amount. The seller receives
 `gross - floor(gross * 10 / 100)` wallet credits. Rounding is per completed

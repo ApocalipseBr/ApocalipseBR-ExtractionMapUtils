@@ -2,13 +2,14 @@ if not isServer() then return end
 require 'ApocWallet/Protocol'
 local Entities=require 'ApocBR/Entities'
 if ApocWallet.EntityStore then return ApocWallet.EntityStore end
-local S={queue={},keys={},nextAttempt=0,status='loading',committed={},dirty={}}
+local S={queue={},keys={},nextAttempt=0,status='loading',committed={},dirty={},marketVersions={}}
 ApocWallet.EntityStore=S
 local collections={jobs=true,receipts=true,finished=true,escrow=true,purchases=true,itemData=true,
     ['market.listings']=true,['market.requests']=true,['market.transactions']=true,['market.credits']=true,['market.actions']=true}
 local function log(status) if S.lastLog~=status then S.lastLog=status; print('[ApocWallet/Entities] '..status) end end
 function S.data() if not S.root then error('PERSISTENCE_NOT_READY') end; return S.root end
 function S.ready() return S.status=='ready' and not S.initializing end
+function S.sharedMarket() return S.shared==true end
 local function bucket(collection)
     if collection=='$' then return S.root end
     if collection=='market.$' then S.root.market=S.root.market or {}; return S.root.market end
@@ -51,7 +52,19 @@ local function complete(task,ok,reason)
     S.keys[task.key]=nil; S.active=nil
     if not ok then
         restore()
+        if reason=='MARKET_CONFLICT' and S.root.market then
+            local market=S.root.market
+            market.collecting=nil; market.expiredListings=nil; market.pendingActions=nil
+        end
         if task.onError then pcall(task.onError,reason) else log('OPERATION_FAILED '..tostring(reason)) end
+    end
+    for key in pairs(task.marketAliases or {}) do
+        local market=S.root.market
+        if market.openListings then market.openListings[key]=nil end
+        if market.expiredListings then market.expiredListings[key]=nil end
+        bucket('market.listings')[key]=nil
+        S.committed[address('market.listings',key)]=nil
+        S.marketVersions[key]=nil
     end
 end
 local function rejectQueued(reason)
@@ -77,7 +90,8 @@ local function save(task)
     local ok,reason=pcall(function()
         S.repository:mutate(task.revision,task.mutationId,task.operations,function(result)
             task.inflight=false
-            if result.status=='OK' then task.ack=result.revision
+            if result.status=='OK' then task.ack=result.revision; task.marketVersions=result.marketVersions
+            elseif result.status=='MARKET_CONFLICT' then task.marketConflict=true
             elseif result.status~='BUSY' and result.status~='UNAVAILABLE' and result.status~='OUTCOME_UNKNOWN' then
                 task.failure='PERSISTENCE_'..tostring(result.status)
             end
@@ -99,12 +113,52 @@ function S.persist(...)
         local payload=value~=nil and encoded(path.collection,value) or nil
         if payload~=S.committed[id] then
             operations[#operations+1]={collection=path.collection,key=path.key,payload=payload,deleted=value==nil or nil}
+            if S.shared and path.collection=='market.listings' then
+                operations[#operations].marketExpected=S.marketVersions[path.key] or ''
+                if task.marketBuy==path.key then operations[#operations].marketBuy=true end
+            end
         else S.dirty[id]=nil end
     end
     if #operations==0 then return end
     if #operations>(S.initializing and 100000 or 256) then error('WALLET_MUTATION_LIMIT') end
     task.operations=operations; task.revision=S.revision; task.mutationId=Entities.newMutationId()
     save(task); coroutine.yield()
+end
+function S.beforeMarketBuy(key)
+    S.active.marketBuy=key
+end
+local function marketRead(document)
+    local task=S.active
+    task.reading=true
+    local ok=pcall(function()
+        Entities.document(document):load(function(result) task.readResult=result end)
+    end)
+    if not ok then task.readResult={status='UNAVAILABLE'} end
+    coroutine.yield()
+    local result=task.readResult
+    task.readResult=nil; task.reading=false
+    return result
+end
+function S.marketCatalog(mode,steamId,page,query)
+    local result=marketRead('ApocWallet.MarketCatalog.v1.'..mode..':'..steamId..':'..string.format('%.0f',page)..':'..query)
+    if result.status=='OK' then return result end
+end
+function S.marketListing(key)
+    if not key:match('^%d+$') and not key:match('^market%-%x+$') or #key>39 then return nil,'ITEM' end
+    local result=marketRead('ApocWallet.MarketListing.'..key)
+    if result.status~='OK' then return nil,result.status=='NOT_FOUND' and 'ITEM' or 'WAIT' end
+    local value=Entities.decode(result.payload).value
+    value.id=key
+    local collection='market.listings'
+    bucket(collection)[key]=value
+    S.committed[address(collection,key)]=encoded(collection,value)
+    S.marketVersions[key]=result.checksum
+    if key:sub(1,7)=='market-' then
+        local task=S.active
+        task.marketAliases=task.marketAliases or {}
+        task.marketAliases[key]=true
+    end
+    return value,nil,result.foreign==true,result.now
 end
 local function importLegacy(root)
     S.root=root
@@ -127,16 +181,19 @@ local function bootstrap()
         S.repository:load(function(result)
             local handled,reason=pcall(function()
             if result.status=='OK' then
+                S.shared=result.sharedMarket==true
                 local decoded,error=pcall(function()
                     S.root={}; S.committed={}; S.dirty={}
                     for _,row in ipairs(result.records) do
                         bucket(row.collection)[row.key]=Entities.decode(row.payload).value
                         S.committed[address(row.collection,row.key)]=encoded(row.collection,bucket(row.collection)[row.key])
+                        if row.checksum then S.marketVersions[row.key]=row.checksum end
                     end
                 end)
                 if not decoded then fail({status=error}); return end
                 S.revision=result.revision
             elseif result.status=='NOT_FOUND' then
+                S.shared=result.sharedMarket==true
                 S.root={}; S.committed={}; S.dirty={}; S.revision='0'
                 local legacy=ModData and ModData.get and ModData.get('ApocWallet.Couriers.v1')
                 if legacy then importLegacy(Entities.decode(Entities.encode(legacy))) end
@@ -172,13 +229,23 @@ function S.update()
         elseif task.failure then
             S.status='blocked'; log(task.failure); complete(task,false,task.failure)
             rejectQueued(task.failure); return
+        elseif task.marketConflict then
+            complete(task,false,'MARKET_CONFLICT')
         elseif task.ack then
             S.revision=task.ack
+            local stale=false
             for _,op in ipairs(task.operations) do
                 local id=address(op.collection,op.key)
                 S.committed[id]=op.payload; S.dirty[id]=nil
+                if S.shared and op.collection=='market.listings' then
+                    S.marketVersions[op.key]=task.marketVersions and task.marketVersions[op.key]
+                    if not S.marketVersions[op.key] then stale=true end
+                end
             end
-            task.operations=nil; task.ack=nil; task.inflight=false; resume(task)
+            task.operations=nil; task.ack=nil; task.inflight=false; task.marketVersions=nil
+            if stale then complete(task,false,'MARKET_CONFLICT') else resume(task) end
+        elseif task.reading then
+            if task.readResult then resume(task) else return end
         elseif task.operations then
             if not task.inflight and getTimestampMs()>=(task.retryAt or 0) then save(task) end
             return

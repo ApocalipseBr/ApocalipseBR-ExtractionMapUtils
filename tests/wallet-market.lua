@@ -118,6 +118,16 @@ check(#page.rows==1 and page.rows[1].price==15 and page.rows[1].count==2,'public
 check(not page.rows[1].blob and not page.rows[1].seller,'bulletin never exposes custody or identity')
 local inv=command(seller,'MarketPage',{token='inventory1',mode='inventory',page=1})
 check(#inv.rows==0,'tuned radio excluded from posting inventory')
+local decodeItem=ApocBrApiBridge.decodeItem
+ApocBrApiBridge.decodeItem=function(blob)
+    if blob=='2:83' then return item(2,'Base.WalkieTalkie1',83) end
+    return decodeItem(blob)
+end
+local incompatible=command(buyer,'MarketBuy',{token='incompatible',listingId='1',count=2})
+check(incompatible.error=='UNAVAILABLE' and #requests==0
+    and listing.units[1].state=='available' and listing.units[2].state=='available',
+    'a wrong destination type in a multi-unit purchase leaves all cargo available without a debit')
+ApocBrApiBridge.decodeItem=decodeItem
 local bought=command(buyer,'MarketBuy',{token='buy1',listingId='1',count=2,amount=0,items={{type='Base.Gold'}}})
 check(bought and bought.kind=='reserved','purchase reserves selected cargo')
 check(bought.gossip:find(P.code('Base.Axe'),1,true) and bought.gossip:find('MER%-001'),'reservation gossip identifies cargo and page')
@@ -217,6 +227,11 @@ time=deadline+1
 package.loaded['ApocWallet/MarketService']=nil; ApocWallet.MarketService=nil
 M=require 'ApocWallet/MarketService'; M.update()
 command(seller,'MarketTune',{token='return-tune',radio={itemId=seller.radio.id}})
+ApocBrApiBridge.decodeItem=function() return nil end
+local incompatibleReturn=command(seller,'MarketRecover',{token='return-one',listingId=exp.id})
+check(incompatibleReturn.error=='UNAVAILABLE' and exp.units[1].state=='available',
+    'an unreadable expired item stays in custody and the same claim remains retryable')
+ApocBrApiBridge.decodeItem=decodeItem
 local recovered=command(seller,'MarketRecover',{token='return-one',listingId=exp.id})
 check(recovered.kind=='recovered' and exp.units[1].state=='returned','expired exact cargo handed to courier')
 local units=persistent.jobs[recovered.jobId].units
@@ -350,4 +365,71 @@ time=time+1000
 M.data().transactions['operator-poll']={state='reserved',buyer=originalCharacter(seller),items={{type='Base.Axe'}}}
 M.status(seller,'operator-poll','operator-poll')
 check(Operators.contacts[id].expires==deadline,'status polling does not extend operator inactivity deadline')
+
+-- The original radio commands use the shared view and retain the requesting
+-- world's purchase and return paths.
+withoutCredits.transactions['operator-poll']=nil; withoutCredits.pendingTransactions['operator-poll']=nil
+local store=package.loaded['ApocWallet/EntityStore']
+local remoteId='market-'..string.rep('1',32)
+local expiredId='market-'..string.rep('2',32)
+local remoteSeller={steamId='76561198000000022',characterId='12345678-1234-4234-8234-000000000999',sourceServerId=9}
+local remote={id=remoteId,state='open',expiresAt=time+100000,price=55,type='Base.Axe',seller=remoteSeller,
+    units={{state='available',blob='80:31'}}}
+local expiredRemote={id=expiredId,state='expired',price=30,type='Base.Axe',seller=remoteSeller,
+    units={{state='available',blob='81:32'}}}
+local sharedListings={[remoteId]=remote,[expiredId]=expiredRemote}
+local marked,queryArgs
+store.sharedMarket=function() return true end
+store.marketListing=function(key) return sharedListings[key],nil,true,time end
+store.beforeMarketBuy=function(key) marked=key end
+store.marketCatalog=function(mode,steam,n,query)
+    queryArgs={mode,steam,n,query}
+    return {page=2,pages=3,listings={{id=remoteId,name='Axe',type='Base.Axe',price=55,count=1}}}
+end
+local existingIdentity=ApocBRModEntities.character
+ApocBRModEntities.character=function(p)
+    local c=existingIdentity(p)
+    if p==seller then c.steamId=remoteSeller.steamId end
+    return c
+end
+ApocBrApiBridge.isPortableItem=function() return false end
+time=time+2000
+command(buyer,'MarketTune',{token='shared-tune',radio={itemId=buyer.radio.id}})
+local catalog=command(buyer,'MarketPage',{token='shared-catalog',mode='market',page=2,query='Axe: á'})
+check(catalog.page==2 and catalog.pages==3 and catalog.rows[1].id==remoteId
+    and catalog.rows[1].code==P.code('Base.Axe') and queryArgs[4]=='Axe: á','shared page preserves IDs, search and database pagination')
+local foreignLegacy=command(buyer,'MarketBuy',{token='shared-purchase',listingId=remoteId,count=1})
+check(foreignLegacy.error=='UNAVAILABLE' and remote.units[1].state=='available','foreign legacy bytes cannot be decoded as local cargo')
+ApocBrApiBridge.isPortableItem=function() return true end
+local foreignBuy=command(buyer,'MarketBuy',{token='shared-purchase',listingId=remoteId,count=1})
+local foreignTx=M.data().transactions[foreignBuy.transaction]
+check(foreignBuy.kind=='reserved' and marked==remoteId and foreignTx.destination.x==10
+    and remote.units[1].state=='reserved','foreign listing reserves globally and captures destination locally')
+M.update()
+local remoteDebit=requests[#requests]
+check(remoteDebit.endpoint=='DEBIT' and remoteDebit.body:find('"sourceServerId":2',1,true),'foreign purchase debits the buyer scope')
+callbacks[remoteDebit.id]({requestId=remoteDebit.id,ok=true,idempotencyKey=foreignTx.id,transactionId='remote-debit'})
+time=time+1000; Purchase.update(); M.update()
+local remoteCredit=requests[#requests]
+check(foreignTx.state=='complete' and remote.units[1].state=='sold' and persistent.jobs[foreignTx.jobId].x==10
+    and remoteCredit.endpoint=='CREDIT' and remoteCredit.body:find('"sourceServerId":9',1,true),
+    'one local delivery completes a foreign sale and credits the original seller scope')
+local deniedReturn=command(buyer,'MarketRecover',{token='shared-theft',listingId=expiredId})
+check(deniedReturn.error=='ITEM' and expiredRemote.units[1].state=='available','another Steam account cannot claim remote expired stock')
+local returned=command(seller,'MarketRecover',{token='shared-return',listingId=expiredId})
+check(returned.kind=='recovered' and expiredRemote.units[1].state=='returned'
+    and persistent.jobs[returned.jobId].items[1].blob=='81:32','same Steam account can claim expired cargo with a different character')
+local duplicate=command(seller,'MarketRecover',{token='shared-return-duplicate',listingId=expiredId})
+check(duplicate.error=='ITEM','a second request cannot claim the same foreign cargo')
+local localLegacy={id='9000',state='open',type='Base.Axe',units={{state='available',blob='82:33'}}}
+M.data().listings[localLegacy.id]=localLegacy
+store.marketListing=function(key)
+    if key==localLegacy.id then return localLegacy,nil,false,time end
+    return sharedListings[key],nil,true,time
+end
+ApocBrApiBridge.isPortableItem=function(blob) return blob:sub(1,7)=='tagged:' end
+ApocBrApiBridge.tagLocalItem=function(blob) return blob=='82:33' and 'tagged:'..blob or nil end
+time=time+1000; M.update()
+check(localLegacy.units[1].blob=='tagged:82:33' and localLegacy.units[1].state=='available',
+    'the origin upgrades validated legacy stock without changing its availability')
 print('Passed '..checks..' production market ownership, custody, purchase, settlement and radio checks.')

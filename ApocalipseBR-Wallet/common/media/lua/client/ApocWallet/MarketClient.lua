@@ -81,6 +81,11 @@ end
 local function apply(s,args)
     local request=s.pending
     local command=request.command
+    if not args.ok and args.error=='WAIT' and request.automaticRefresh then
+        -- Keep a silent refresh alive across server admission backpressure.
+        request.sent=getTimestampMs(); request.retryAt=request.sent+350
+        return
+    end
     if type(args.operator)=='table' then
         s.operator=args.operator
         s.dialogue.operatorName=args.operator.name
@@ -114,15 +119,15 @@ local function apply(s,args)
         if command=='MarketPage' and request.pageChatter then operatorLine(s,args,'UI_ApocWallet_MarketPageRxFmt',{P.pageReference(args.mode,args.page)}) end
     elseif args.kind=='posted' then
         operatorLine(s,args,'UI_ApocWallet_MarketPostRxFmt',{args.code,args.count})
-        s.needsRefresh=true
+        s.needsRefresh=true; s.refreshAt=getTimestampMs()+350
     elseif args.kind=='reposted' or args.kind=='recovered' then
         operatorLine(s,args,args.kind=='reposted' and 'UI_ApocWallet_MarketReposted' or 'UI_ApocWallet_MarketRecovered')
-        s.needsRefresh=true
+        s.needsRefresh=true; s.refreshAt=getTimestampMs()+350
     elseif args.kind=='reserved' then
         s.transaction=args.transaction; s.nextPoll=getTimestampMs()+2500
         operatorLine(s,args,'UI_ApocWallet_MarketBuyWait')
     elseif args.kind=='bought' then
-        s.transaction=nil; s.needsRefresh=true
+        s.transaction=nil; s.needsRefresh=true; s.refreshAt=getTimestampMs()+350
         operatorLine(s,args,'UI_ApocWallet_MarketBuyRx')
         if s.refreshBalance then s.refreshBalance() end
     end
@@ -146,14 +151,17 @@ function C.update()
         else
             s.dialogue:update()
             if s.deferred and t>=s.readyAt then local args=s.deferred; s.deferred=nil; apply(s,args) end
-            if s.pending and t-s.pending.sent>=10000 then
+            if s.pending and (s.pending.retryAt and t>=s.pending.retryAt or t-s.pending.sent>=10000) then
                 -- Retransmit the same token for posts and purchases; never invent
                 -- a second transaction after a lost acknowledgment.
-                s.pending.sent=t; sendClientCommand(s.player,'ApocWallet',s.pending.command,s.pending.args)
+                s.pending.sent=t; s.pending.retryAt=nil
+                sendClientCommand(s.player,'ApocWallet',s.pending.command,s.pending.args)
             elseif not s.pending and s.transaction and t>=s.nextPoll then
                 s.nextPoll=t+2500; C.request(s,'MarketStatus',{transaction=s.transaction})
-            elseif not s.pending and s.needsRefresh then
-                s.needsRefresh=nil; C.request(s,'MarketPage',{mode=s.mode,page=s.page,query=s.query,silent=true})
+            elseif not s.pending and s.needsRefresh and t>=(s.refreshAt or 0) then
+                if C.request(s,'MarketPage',{mode=s.mode,page=s.page,query=s.query,silent=true}) then
+                    s.pending.automaticRefresh=true; s.needsRefresh=nil; s.refreshAt=nil
+                end
             end
         end
     end

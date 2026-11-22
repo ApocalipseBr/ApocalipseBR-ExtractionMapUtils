@@ -99,7 +99,7 @@ local function validItems(items)
         if type(sp)~='table' or type(sp.type)~='string' or not sp.type:match('^[%w_]+%.[%w_%-]+$')
             or type(sp.count)~='number' or sp.count%1~=0 or sp.count<1 or sp.count>100 then return false end
         if not ScriptManager.instance:getItem(sp.type) then return false end
-        if sp.blob~=nil and (type(sp.blob)~='string' or #sp.blob>1398104 or sp.count~=1) then return false end
+        if sp.blob~=nil and (type(sp.blob)~='string' or #sp.blob>1398156 or sp.count~=1) then return false end
         count=count+sp.count
     end
     return count<=100
@@ -157,6 +157,16 @@ local function pickupJob(player)
     return job
 end
 
+local function matchesCargo(item,blob)
+    if not item or not ApocBrApiBridge then return false end
+    if ApocBrApiBridge.matchesItem then
+        local ok,matches=pcall(ApocBrApiBridge.matchesItem,item,blob)
+        return ok and matches==true
+    end
+    local ok,current=pcall(ApocBrApiBridge.encodeItem,item)
+    return ok and current==blob
+end
+
 -- Exact item instances are serialized before removal, in server-owned custody.
 -- A later market publisher can consume escrow; drone arrival never removes items.
 function Service.pickup(player, requestId, items)
@@ -196,10 +206,9 @@ function Service.pickup(player, requestId, items)
     -- before the native handoff; no Lua event can interleave this removal loop.
     for i,item in ipairs(items) do
         local container=item:getContainer()
-        local ok,blob=pcall(ApocBrApiBridge.encodeItem,item)
         if player:isDead() or getPlayerByOnlineID and getPlayerByOnlineID(player:getOnlineID())~=player
             or not container or container:getOutermostContainer()~=player:getInventory()
-            or player:isEquipped(item) or not ok or blob~=encoded[i].blob then
+            or player:isEquipped(item) or not matchesCargo(item,encoded[i].blob) then
             d.escrow[receipt].state='cancelled'; persist('escrow',receipt); return nil,'ITEM_UNAVAILABLE'
         end
     end
@@ -232,6 +241,23 @@ local function alreadyPlaced(square,job,index)
     end
     return false
 end
+local function decodeCargo(spec)
+    local item=ApocBrApiBridge and ApocBrApiBridge.decodeItem and ApocBrApiBridge.decodeItem(spec.blob)
+    if item and item:getFullType()==spec.type then return item end
+end
+function Service.canDecodeCargo(items,foreign)
+    for _,spec in ipairs(items) do
+        if foreign and (not ApocBrApiBridge or not ApocBrApiBridge.isPortableItem
+            or not ApocBrApiBridge.isPortableItem(spec.blob)) then return false end
+        if spec.blob and not decodeCargo(spec) then return false end
+    end
+    return true
+end
+function Service.tagLocalCargo(blob,fullType)
+    if ApocBrApiBridge and ApocBrApiBridge.tagLocalItem and decodeCargo({blob=blob,type=fullType}) then
+        return ApocBrApiBridge.tagLocalItem(blob)
+    end
+end
 local function deliver(job,square)
     local index=0
     local original=job.placed
@@ -246,8 +272,7 @@ local function deliver(job,square)
                 if not alreadyPlaced(square,job,index) then
                     local item
                     if spec.blob then
-                        item=ApocBrApiBridge and ApocBrApiBridge.decodeItem and ApocBrApiBridge.decodeItem(spec.blob)
-                        if item and item:getFullType()~=spec.type then return finish(false) end
+                        item=decodeCargo(spec)
                     else item=instanceItem(spec.type) end
                     if not item then return finish(false) end
                     local md=item:getModData()
@@ -341,8 +366,7 @@ function Service.reconcilePickup(player)
             local valid=true
             for _,spec in ipairs(entry.items) do
                 local item=player:getInventory():getItemById(spec.itemId)
-                local ok,blob=pcall(ApocBrApiBridge.encodeItem,item)
-                if not item or player:isEquipped(item) or not ok or blob~=spec.blob then valid=false; break end
+                if not item or player:isEquipped(item) or not matchesCargo(item,spec.blob) then valid=false; break end
                 verified[#verified+1]=item
             end
             if valid then

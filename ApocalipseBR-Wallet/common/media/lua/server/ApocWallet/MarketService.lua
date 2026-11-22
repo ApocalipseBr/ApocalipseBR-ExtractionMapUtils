@@ -38,6 +38,51 @@ local function data()
     return d.market
 end
 M.data=data
+local function shared() return Store.sharedMarket and Store.sharedMarket() end
+local function loadListing(id)
+    if shared() then return Store.marketListing(id) end
+    return data().listings[id]
+end
+local function sellerOwns(identity, seller)
+    if shared() then return seller.steamId==identity.steamId end
+    return seller.characterId==identity.characterId
+end
+local function upgradeLocalStock(listing)
+    local changed,remaining=false,false
+    for _,unit in ipairs(listing.units) do
+        if unit.state=='available' and not ApocBrApiBridge.isPortableItem(unit.blob) then
+            local tagged=Courier.tagLocalCargo(unit.blob,listing.type)
+            if tagged then unit.blob=tagged; changed=true else remaining=true end
+        end
+    end
+    return changed,remaining
+end
+local function upgradeLegacyStock(d,t)
+    if not ApocBrApiBridge or not ApocBrApiBridge.isPortableItem or not ApocBrApiBridge.tagLocalItem then return end
+    if not M.legacyStock then
+        M.legacyStock={}
+        for id,listing in pairs(d.listings) do
+            if id:match('^%d+$') and (listing.state=='open' or listing.state=='expired') then
+                for _,unit in ipairs(listing.units) do
+                    if unit.state=='available' and not ApocBrApiBridge.isPortableItem(unit.blob) then
+                        M.legacyStock[id]=0; break
+                    end
+                end
+            end
+        end
+    end
+    for id,retryAt in pairs(M.legacyStock) do
+        if t>=retryAt then
+            local listing=loadListing(id)
+            if listing then
+                local changed,remaining=upgradeLocalStock(listing)
+                if changed then Courier.persist('market.listings',id) end
+                M.legacyStock[id]=remaining and t+60000 or nil
+            else M.legacyStock[id]=t+60000 end
+            break
+        end
+    end
+end
 local function identity(player)
     local c=ApocBRModEntities and ApocBRModEntities.character(player)
     if not c or c.status~='OK' or type(c.characterId)~='string'
@@ -127,8 +172,10 @@ local function expire(listing,t)
         listing.state='expired'; data().openListings[listing.id]=nil; data().expiredListings[listing.id]=true; Courier.persist('market.listings',listing.id)
     end
 end
-local function recover(action)
-    local d=data(); local listing=d.listings[action.listingId]
+local function recover(action,listing)
+    local d=data()
+    if not listing then listing=loadListing(action.listingId) end
+    if not listing then return nil,'WAIT' end
     local job,error=Courier.delivery(action.owner,action.id,action.destination,action.items)
     if not job then return nil,error=='COURIER_QUEUE_FULL' and 'WAIT' or 'UNAVAILABLE' end
     for _,i in ipairs(action.indices) do listing.units[i].state='returned' end
@@ -144,20 +191,23 @@ local function manage(player,args,c,command)
         if action.done then return action end
         return recover(action)
     end
-    local listing=d.listings[tostring(args.listingId)]
-    if not listing or listing.seller.characterId~=c.characterId then return nil,'ITEM' end
-    expire(listing,getTimestampMs())
+    local listing,error,foreign,databaseNow=loadListing(tostring(args.listingId))
+    if not listing then return nil,error or 'ITEM' end
+    if not sellerOwns(c,listing.seller) then return nil,'ITEM' end
+    expire(listing,databaseNow or getTimestampMs())
     if listing.state~='expired' or available(listing)==0 then return nil,'ITEM' end
     -- An unresolved buyer owns its reserved units until settlement. Wait before
     -- letting the seller move any stock, so failed debits cannot strand cargo.
     for _,unit in ipairs(listing.units) do if unit.state=='reserved' then return nil,'WAIT' end end
     action={id=key,command=command,listingId=listing.id}
     if command=='MarketRepost' then
-        local active=0
-        for _ in pairs(d.openListings) do active=active+1 end
-        for _ in pairs(d.collecting) do active=active+1 end
-        if active>=2048 then return nil,'WAIT' end
-        listing.state='open'; listing.openedAt=getTimestampMs(); listing.expiresAt=listing.openedAt+P.LISTING_LIFETIME
+        if not shared() then
+            local active=0
+            for _ in pairs(d.openListings) do active=active+1 end
+            for _ in pairs(d.collecting) do active=active+1 end
+            if active>=2048 then return nil,'WAIT' end
+        end
+        listing.state='open'; listing.openedAt=databaseNow or getTimestampMs(); listing.expiresAt=listing.openedAt+P.LISTING_LIFETIME
         d.openListings[listing.id]=true; d.expiredListings[listing.id]=nil; action.done=true; d.actions[key]=action; Courier.persist('market.actions',key,'market.listings',listing.id)
         return action
     end
@@ -167,11 +217,13 @@ local function manage(player,args,c,command)
     for i,unit in ipairs(listing.units) do
         if unit.state=='available' then
             action.items[#action.items+1]={type=listing.type,count=1,blob=unit.blob}
-            action.indices[#action.indices+1]=i; unit.state='returning'
+            action.indices[#action.indices+1]=i
         end
     end
+    if not Courier.canDecodeCargo(action.items,foreign) then return nil,'UNAVAILABLE' end
+    for _,i in ipairs(action.indices) do listing.units[i].state='returning' end
     d.actions[key]=action; d.pendingActions[key]=true; Courier.persist('market.actions',key,'market.listings',listing.id)
-    return recover(action)
+    return recover(action,listing)
 end
 local function inventory(player,session)
     local groups={}
@@ -195,10 +247,22 @@ local function inventory(player,session)
     table.sort(rows,function(a,b) return a.type<b.type end)
     return rows
 end
+local function pendingTransaction(characterId)
+    local d=data()
+    for id in pairs(d.pendingTransactions) do
+        if d.transactions[id].buyer.characterId==characterId then return id end
+    end
+end
 local function page(player,session,mode,n,query)
     query=query or ''
     local all={}
     if mode=='inventory' then all=inventory(player,session)
+    elseif shared() then
+        local catalog=Store.marketCatalog(mode,session.steamId,n,query)
+        if not catalog then return {ok=false,error='WAIT'} end
+        for _,row in ipairs(catalog.listings) do row.code=P.code(row.type) end
+        return {ok=true,kind='page',mode=mode,query=query,page=catalog.page,pages=catalog.pages,rows=catalog.listings,
+            transaction=pendingTransaction(session.characterId)}
     else
         local d=data()
         for id in pairs(d.openListings) do expire(d.listings[id],getTimestampMs()) end
@@ -220,12 +284,8 @@ local function page(player,session,mode,n,query)
     n=math.max(1,math.min(pages,n or 1))
     local rows={}
     for i=(n-1)*P.PAGE_SIZE+1,math.min(#all,n*P.PAGE_SIZE) do rows[#rows+1]=all[i] end
-    local transaction
-    local d=data()
-    for id in pairs(d.pendingTransactions) do
-        if d.transactions[id].buyer.characterId==session.characterId then transaction=id; break end
-    end
-    return {ok=true,kind='page',mode=mode,query=query,page=n,pages=pages,rows=rows,transaction=transaction}
+    return {ok=true,kind='page',mode=mode,query=query,page=n,pages=pages,rows=rows,
+        transaction=pendingTransaction(session.characterId)}
 end
 local function post(player,session,args,c)
     if type(args.itemIds)~='table' or #args.itemIds<1 or #args.itemIds>100 or not P.integer(args.price,1,10000000) then return nil,'INVALID' end
@@ -248,7 +308,7 @@ local function post(player,session,args,c)
             and not (existing.state=='rejected' and existing.error==nil) then return nil,'ITEM' end
     end
     local active=0
-    for _ in pairs(d.openListings) do active=active+1 end
+    if not shared() then for _ in pairs(d.openListings) do active=active+1 end end
     for _ in pairs(d.collecting) do active=active+1 end
     if not existing and active>=2048 then return nil,'WAIT' end
     local items,seen,ft={},{},nil
@@ -298,8 +358,9 @@ local function buy(player,session,args,c)
         if existing.listingId~=tostring(args.listingId) or #existing.indices~=args.count then return nil,'INVALID' end
         return existing
     end
-    local listing=d.listings[tostring(args.listingId)]
-    if listing then expire(listing,getTimestampMs()) end
+    local listing,error,foreign,databaseNow=loadListing(tostring(args.listingId))
+    if error=='WAIT' then return nil,error end
+    if listing then expire(listing,databaseNow or getTimestampMs()) end
     if not listing or listing.state~='open' or not P.integer(args.count,1,100) or available(listing)<args.count then return nil,'SOLD' end
     if listing.price*args.count>1000000000 then return nil,'INVALID' end
     local tx={id=txid,requestKey=args.token,listingId=listing.id,state='reserved',buyer={status='OK',characterId=c.characterId,
@@ -307,10 +368,15 @@ local function buy(player,session,args,c)
         items={},indices={},amount=listing.price*args.count}
     for i,unit in ipairs(listing.units) do
         if unit.state=='available' and #tx.items<args.count then
-            unit.state='reserved'; unit.transaction=txid
             tx.items[#tx.items+1]={type=listing.type,count=1,blob=unit.blob}; tx.indices[#tx.indices+1]=i
         end
     end
+    if not tx.destination then return nil,'ITEM' end
+    if not Courier.canDecodeCargo(tx.items,foreign) then return nil,'UNAVAILABLE' end
+    for _,i in ipairs(tx.indices) do
+        listing.units[i].state='reserved'; listing.units[i].transaction=txid
+    end
+    if shared() then Store.beforeMarketBuy(listing.id) end
     d.transactions[txid]=tx; d.pendingTransactions[txid]=true; Courier.persist('market.transactions',txid,'market.listings',listing.id)
     return tx
 end
@@ -327,7 +393,7 @@ function M.handle(player,command,args)
         if session and t-(session.lastTune or 0)<1500 then reply(player,args.token,{ok=false,error='WAIT'}); return end
         local r=radio(player,args.radio)
         if not r then reply(player,args.token,{ok=false,error='RADIO'}); return end
-        session={locator=args.radio,radio=r,lastTune=t,last=0,characterId=c.characterId,expires=t+1800000,
+        session={locator=args.radio,radio=r,lastTune=t,last=0,characterId=c.characterId,steamId=c.steamId,expires=t+1800000,
             operator=Operators.contact(c,player),command=command,mode='market',page=1}
         M.sessions[player]=session
         reply(player,args.token,page(player,session,'market',1)); return
@@ -347,7 +413,7 @@ function M.handle(player,command,args)
         session.operator=Operators.contact(c,player)
         session.silent=args.silent==true
         local result=page(player,session,args.mode,args.page,args.query)
-        session.mode,session.page=result.mode,result.page
+        if result.ok then session.mode,session.page=result.mode,result.page end
         reply(player,args.token,result)
     elseif command=='MarketRecover' or command=='MarketRepost' then
         session.operator=Operators.contact(c,player)
@@ -378,7 +444,7 @@ function M.handle(player,command,args)
     end
 end
 local function settlement(tx)
-    local d=data(); local listing=d.listings[tx.listingId]
+    local d=data()
     local order=Courier.data().purchases[tx.id]
     if not order then
         local id,error=Purchase.enqueue(tx.buyer,tx.owner,tx.destination,tx.requestKey,
@@ -386,10 +452,16 @@ local function settlement(tx)
         if not id then tx.error=error end
         return
     end
+    if order.state~='failed' and order.state~='fulfilled' then return end
+    local listing=loadListing(tx.listingId)
+    if not listing then return end
     if order.state=='failed' then
         for _,i in ipairs(tx.indices) do
             local unit=listing.units[i]
             if unit.transaction==tx.id then unit.state='available'; unit.transaction=nil end
+        end
+        if shared() and tx.listingId:match('^%d+$') and ApocBrApiBridge and ApocBrApiBridge.isPortableItem then
+            M.legacyStock=M.legacyStock or {}; M.legacyStock[listing.id]=0
         end
         tx.state='failed'; tx.error=order.error; d.pendingTransactions[tx.id]=nil
         d.openListings[listing.id]=listing.state=='open' and true or nil
@@ -401,7 +473,7 @@ local function settlement(tx)
         tx.fee=tx.fee or math.floor(tx.amount*P.SALE_TAX_PERCENT/100)
         tx.proceeds=tx.amount-tx.fee
         d.credits[tx.id]=d.credits[tx.id] or {id=tx.id,context=listing.seller,amount=tx.proceeds,state='pending',
-            key=listing.seller.characterId..':sale:'..listing.id..':'..tx.requestKey,nextAttempt=0}
+            key=shared() and 'market.sale:'..tx.id or listing.seller.characterId..':sale:'..listing.id..':'..tx.requestKey,nextAttempt=0}
         d.pendingCredits[tx.id]=true; d.pendingTransactions[tx.id]=nil
         if available(listing)==0 then d.openListings[listing.id]=nil end
         Courier.persist('market.transactions',tx.id,'market.listings',listing.id,'market.credits',tx.id)
@@ -435,7 +507,8 @@ function M.update()
     M.nextUpdate=t+500
     if not Courier.persistenceReady() then return end
     local d=data()
-    for id in pairs(d.openListings) do expire(d.listings[id],t) end
+    if not shared() then for id in pairs(d.openListings) do expire(d.listings[id],t) end end
+    if shared() then upgradeLegacyStock(d,t) end
     local recovered=0
     for id in pairs(d.pendingActions) do recover(d.actions[id]); recovered=recovered+1; if recovered>=4 then break end end
     local processed=0
@@ -485,7 +558,7 @@ function M.run(player,command,args)
         else M.handle(player,command,args) end
     end,function(error)
         print('[ApocWallet] market command failed: '..tostring(error))
-        reply(player,args.token,{ok=false,error='STORAGE'})
+        reply(player,args.token,{ok=false,error=error=='MARKET_CONFLICT' and 'WAIT' or 'STORAGE'})
     end)
 end
 return M

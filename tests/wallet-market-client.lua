@@ -73,6 +73,7 @@ time=time+10001; Client.update()
 check(#packets==countPackets+1 and packets[#packets].args.token==postToken,'lost post acknowledgment reuses token')
 Client.receive({onlineId=7,token=postToken,ok=true,kind='posted',code=row.code,count=2})
 check(s.needsRefresh,'confirmed post schedules bulletin refresh')
+time=time+350
 Client.update()
 Client.receive({onlineId=7,token=s.pending.token,ok=true,kind='page',mode='market',page=1,pages=1,rows={row}})
 Client.buy(s,row,1)
@@ -178,9 +179,40 @@ time=time+10001; Client.update()
 check(s.pending.token==retryToken,'management retry keeps original token')
 Client.receive({onlineId=7,token=retryToken,ok=true,kind='reposted'})
 check(s.needsRefresh,'repost acknowledgment refreshes stock')
-s.pending=nil; s.needsRefresh=nil; Panel.action(win); menuOptions[1].fn()
+local refreshPackets=#packets
+Client.update()
+check(#packets==refreshPackets and s.needsRefresh,'fast repost acknowledgment waits before automatic refresh')
+time=time+349; Client.update()
+check(#packets==refreshPackets,'refresh stays deferred until navigation cooldown expires')
+time=time+1; Client.update()
+check(s.pending and s.pending.command=='MarketPage' and s.pending.args.mode=='expired'
+    and s.pending.args.query=='aXe' and s.pending.args.page==1 and s.pending.args.silent,
+    'automatic repost refresh preserves expired view, page and search silently')
+local refreshToken=s.pending.token
+local refreshArgs=s.pending.args
+local refreshLines=#s.dialogue.queue
+Client.receive({onlineId=7,token=refreshToken,ok=false,error='WAIT'})
+check(s.pending and s.pending.token==refreshToken,'rate-limited automatic refresh remains pending')
+check(#s.dialogue.queue==refreshLines,'automatic refresh backpressure adds no operator chatter')
+refreshPackets=#packets
+time=time+349; Client.update()
+check(#packets==refreshPackets,'automatic refresh retry observes cooldown')
+time=time+1; Client.update()
+check(#packets==refreshPackets+1 and packets[#packets].args==refreshArgs,
+    'automatic refresh retry reuses the same request and token')
+Client.receive({onlineId=7,token=refreshToken,ok=true,kind='page',mode='expired',query='aXe',page=1,pages=1,rows={}})
+check(not s.pending and #s.rows==0 and #win.list.items==0,'reposted item disappears from expired UI after refresh')
+s.rows={row}; Panel.populate(win); Panel.action(win); menuOptions[1].fn()
 check(s.pending.command=='MarketRecover','recovery option requests courier return')
 check(s.dialogue.queue[#s.dialogue.queue].args[2]==row.code and s.dialogue.queue[#s.dialogue.queue].args[3]:find('EXP%-001'),'expired management transmits cargo and coded page')
+Client.receive({onlineId=7,token=s.pending.token,ok=false,error='WAIT'})
+check(not s.pending,'management WAIT does not automatically repeat a user action')
+Client.manage(s,row,'MarketRecover')
+Client.receive({onlineId=7,token=s.pending.token,ok=true,kind='recovered'})
+time=time+350; Client.update()
+check(s.pending and s.pending.command=='MarketPage','recovery still schedules automatic refresh')
+Client.receive({onlineId=7,token=s.pending.token,ok=true,kind='page',mode='expired',query='aXe',page=1,pages=1,rows={}})
+check(not s.pending and #s.rows==0,'recovered item disappears from expired list')
 for i=1,30 do s.dialogue:record(i%2==0 and 'operator' or 'player','long message '..i..string.rep(' cargo',20)) end
 check(#s.dialogue.history>12 and #win.marketChat.items>30,'transcript preserves all session exchanges and wraps long lines')
 check(win.marketChat.scroll<0,'transcript follows latest messages')
