@@ -367,5 +367,4 @@ function Lobby.isClosed()
     return Utils.lobbyRuleEnabled("LobbyFenceEnabled") and started and state.released == false and state.removedAll ~= true
 end
 Events.OnServerStarted.Add(Lobby.onStarted)
-Events.LoadGridsquare.Add(Lobby.onSquareLoaded)
 Events.OnTick.Add(Lobby.onTick)

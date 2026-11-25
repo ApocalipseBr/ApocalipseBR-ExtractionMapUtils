@@ -36,9 +36,17 @@ local function fixture(opts)
         return false
     end
     Events = {}
-    for _, event in ipairs({ "LoadChunk", "OnTick", "OnServerCommand", "OnServerStarted", "OnTickEvenPaused" }) do
+    for _, event in ipairs({ "LoadChunk", "LoadGridsquare", "OnTick", "OnServerCommand", "OnServerStarted", "OnTickEvenPaused" }) do
         f.hooks[event] = {}
-        Events[event] = { Add = function(fn) table.insert(f.hooks[event], fn) end }
+        Events[event] = {
+            Add = function(fn) table.insert(f.hooks[event], fn) end,
+            Remove = function(fn)
+                for i, registered in ipairs(f.hooks[event]) do
+                    if fn == registered then table.remove(f.hooks[event], i); return end
+                end
+                error("attempted to remove an unregistered callback")
+            end,
+        }
     end
     function f.fire(event, ...)
         if event == "LoadChunk" and not (...).getGridSquare then
@@ -85,13 +93,16 @@ local function fixture(opts)
         return obj
     end
     dofile(media .. "server/ApocExtractionMapUtils_LobbyCleanup.lua")
+    if not opts.client then
+        ApocExtractionMapUtils.Lobby = { onSquareLoaded = function() f.fenceLoads = (f.fenceLoads or 0) + 1 end }
+    end
     return f
 end
 for _, opts in ipairs({ {}, { enabled = false }, { enabled = true, lobby = false }, { enabled = true, client = true } }) do
     local f = fixture(opts)
     local z = f.add(8, 8, 1, 1)
     f.fire("OnServerStarted"); f.pump(10)
-    assert(not z.removed and f.lookups == 0 and #f.requests == 0)
+    assert(not z.removed and f.lookups == 0 and #f.requests == 0 and #f.hooks.LoadGridsquare == 0)
 end
 local f = fixture({ enabled = true })
 dofile(media .. "server/ApocExtractionMapUtils_LobbyCleanup.lua")
@@ -109,6 +120,10 @@ local player = f.add(8, 8, 1, 7, "IsoPlayer")
 local reanimated = f.add(8, 8, 1, 8, nil, true)
 f.fire("OnServerStarted")
 assert(f.lookups == 0 and #f.requests == 0 and f.logged("START:"), "startup must enqueue without blocking")
+f.fire("OnServerStarted")
+assert(#f.hooks.LoadGridsquare == 1, "one perimeter listener during startup cleanup")
+f.fire("LoadGridsquare")
+assert(f.fenceLoads == 1)
 f.pump(1)
 assert(#f.requests == 1 and not inside.removed, "force loading precedes settling and deletion")
 local duringLoad = f.add(8, 8, 1, 9)
@@ -118,6 +133,8 @@ assert(not outside.removed and not above.removed and not basement.removed and no
 assert(f.lookups == 384 and not f.logged("COMPLETE:"), "first sweep must not imply population completion")
 f.pump(5)
 assert(f.logged("COMPLETE: chunks=4/4, removed=7") and f.releases > 0)
+f.fire("LoadGridsquare")
+assert(#f.hooks.LoadGridsquare == 0 and f.fenceLoads == 1, "completed cleanup unregisters the perimeter listener")
 assert(f.logged("PROGRESS:") and f.logged("CLEANED cell") and f.logged("loading requests released"))
 local entrant = f.add(8, 8, 1, 20)
 local requested = #f.requests
@@ -154,7 +171,8 @@ for _, opts in ipairs({ { enabled = true, ready = 0 }, { enabled = true, ready =
     assert(failed.logged("FAILED:") and not failed.logged("COMPLETE:"))
     local count = #failed.requests
     failed.pump(10)
-    assert(#failed.requests == count and failed.lookups == 0, "failure must stop streaming")
+    assert(#failed.requests == count and failed.lookups == 0 and #failed.hooks.LoadGridsquare == 0,
+        "failure must stop streaming and unregister the perimeter listener")
 end
 -- Reproduce the empty startup sweep followed by virtual zombies arriving later.
 local hydrated
@@ -180,7 +198,11 @@ local cancel = fixture({ enabled = true })
 cancel.fire("OnServerStarted"); cancel.pump(1)
 SandboxVars.ApocExtractionMapUtils.LobbyCleanupZombies = false
 cancel.pump(10)
-assert(cancel.logged("CANCELLED:") and #cancel.requests == 1)
+assert(cancel.logged("CANCELLED:") and #cancel.requests == 1 and #cancel.hooks.LoadGridsquare == 0)
+local noFence = fixture({ enabled = true })
+SandboxVars.ApocExtractionMapUtils.LobbyFenceEnabled = false
+noFence.fire("OnServerStarted")
+assert(noFence.logged("START:") and #noFence.hooks.LoadGridsquare == 0)
 local budget = fixture({ enabled = true })
 SandboxVars.ApocExtractionMapUtils.LobbyX1 = 0
 SandboxVars.ApocExtractionMapUtils.LobbyX2 = 63

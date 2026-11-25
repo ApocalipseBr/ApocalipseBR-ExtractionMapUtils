@@ -132,7 +132,8 @@ local function fixture(options)
     function f.start() f.handlers.OnServerStarted[1]() end
     function f.tick() f.handlers.OnTick[1]() end
     function f.pump(n) for _ = 1, n do f.tick() end end
-    function f.load(square) f.handlers.LoadGridsquare[1](square) end
+    -- Exercise notifications delivered during the startup cleanup window.
+    function f.load(square) f.lobby.onSquareLoaded(square) end
     function f.token() for _, value in pairs(f.files) do return value end end
     function f.loginState(args)
         local reply
@@ -380,7 +381,15 @@ end
 -- Autoload/reload must not multiply subscribers or tick/load hooks.
 local reload = fixture()
 dofile(media .. "server/ApocExtractionMapUtils_Lobby.lua")
-assert(#reload.handlers.OnTick == 1 and #reload.handlers.LoadGridsquare == 1 and #reload.handlers.OnServerStarted == 1)
+assert(#reload.handlers.OnTick == 1 and #reload.handlers.LoadGridsquare == 0 and #reload.handlers.OnServerStarted == 1)
+local afterCleanupOptions = { unloaded = true }
+local afterCleanup = fixture(afterCleanupOptions)
+afterCleanup.start(); afterCleanup.pump(100)
+assert(afterCleanup.adds == 0 and #afterCleanup.handlers.LoadGridsquare == 0)
+afterCleanupOptions.unloaded = false
+afterCleanup.clock = 60000
+afterCleanup.pump(100)
+assert(afterCleanup.adds == 286, "periodic scan repairs newly available edges without a square listener")
 -- Scheduled activation removes the ENTIRE perimeter, independently of a client
 -- relay/token file, and leaves all edges absent through repair/reload/restart.
 local event = fixture()

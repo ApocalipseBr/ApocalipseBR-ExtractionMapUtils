@@ -1,6 +1,7 @@
 local root='ApocalipseBR-Wallet/common/media/lua/'
 package.path=root..'shared/?.lua;'..root..'server/?.lua;'..package.path
-local checks,time,saves,packets,world=0,100000,0,{},{}
+-- Use epoch milliseconds as a Lua number to avoid Fengari integer overflow.
+local checks,time,saves,packets,world=0,1700000000000.0,0,{},{}
 local function check(v,m) checks=checks+1; assert(v,m) end
 function isClient() return false end
 function getTimestampMs() return time end
@@ -185,7 +186,7 @@ time=delivery.due; Courier.update()
 check(#world==3 and world[3]:getItem().condition==61,'self-purchased exact item delivered after player leaves')
 check(P.code('Base.Axe')==P.code('Base.Axe') and P.code('Base.Axe')~=P.code('Base.Hammer'),'deterministic item codenames')
 check(P.sector(1234,5678,2)=='S012-056-N2','deterministic sector')
--- New listings receive 48 real-world hours starting when custody is published.
+-- New listings receive 7 real-world days starting when custody is published.
 seller.getCurrentSquare=function() return sq end
 buyer.getCurrentSquare=function() return sq end
 command(seller,'MarketTune',{token='expiry-tune',radio={itemId=seller.radio.id}})
@@ -196,7 +197,7 @@ local function postItem(id,price)
     return M.data().listings[tostring(M.data().seq)]
 end
 local exp=postItem(41)
-check(exp.expiresAt-exp.openedAt==48*60*60*1000,'publication receives exactly 48 real hours')
+check(exp.expiresAt-exp.openedAt==7*24*60*60*1000,'publication receives exactly 7 real-world days')
 time=exp.expiresAt-1; M.update()
 check(exp.state=='open','listing remains open just before deadline')
 time=exp.expiresAt; M.nextUpdate=0; M.update()
@@ -212,7 +213,7 @@ local stolen=command(other,'MarketRecover',{token='steal',listingId=exp.id})
 check(not stolen.ok,'recovery validates server character ownership')
 local rep=command(seller,'MarketRepost',{token='repost-expired',listingId=exp.id})
 local deadline=exp.expiresAt
-check(rep.kind=='reposted' and deadline==time+P.LISTING_LIFETIME,'repost resets full lifetime without a debit')
+check(rep.kind=='reposted' and deadline==time+7*24*60*60*1000,'repost grants 7 full days without a debit')
 command(seller,'MarketRepost',{token='repost-expired',listingId=exp.id})
 check(exp.expiresAt==deadline,'repost token replay never extends lifetime again')
 -- Search all results before pagination, literal matching and case-insensitive ASCII names.

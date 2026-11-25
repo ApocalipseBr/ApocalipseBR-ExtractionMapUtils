@@ -145,13 +145,14 @@ Listings with no purchase transactions or seller-credit history can rebuild
 their expired index and enter the existing recovery/repost flow. Lua regression
 coverage includes actual record-loader reconstruction through a mocked transport.
 
-Each listing remains public for **48 real-world hours**, starting when its exact
+Each new listing remains public for **7 real-world days**, starting when its exact
 items enter market custody. `getTimestampMs()` is epoch wall-clock time
 (`LuaManager.java`, `getTimestampMs()` delegates to `System.currentTimeMillis()`),
 so offline server time counts. The 500 ms market tick delists expired stock;
 buy requests also enforce the deadline, including requests from stale pages.
-Legacy listings without a deadline use their stored publication/creation time;
-those already older than 48 hours expire on access/update.
+Existing listings with a saved deadline keep it. Legacy listings without a
+deadline use their stored publication or creation time.
+Those at least 7 days old expire on access or update.
 
 The connected radio's **Menu** key opens Mercado, Mochila, Meus expirados,
 Buscar por nome and Limpar busca. In **Meus expirados**, select a listing and
@@ -159,8 +160,8 @@ press **Gerenciar** to choose:
 
 - **Recuperar itens**: return all remaining unsold units by the existing courier
   to the seller's server-captured current square, retaining native item blobs.
-- **Republicar por 48h**: publish the remaining units at the existing unit price
-  for another full 48 hours, without another pickup or an upfront fee.
+- **Republicar por 7 dias**: publish the remaining units at the existing unit price
+  for another full 7 days, without another pickup or an upfront fee.
 
 In shared mode the seller's server-derived Steam account can see and manage
 expired stock. The legacy local market uses the seller's character ID.
@@ -268,21 +269,22 @@ npm exec --yes --package=fengari-node-cli -- fengari tests/wallet-market-client.
 py -3 tests/wallet-translations.py
 ```
 
-- `... fengari tests/wallet-market.lua`: 70 checks using production services,
+- `... fengari tests/wallet-market.lua`: 107 checks passed using production services,
   mocked engine/HTTP boundary. Covers tune authentication, immediate exact-item
   posting, duplicate tokens, private custody, server prices, competing buyers,
   debit gating, seller credit, failed-debit stock release, self-purchase success,
-  offline reservation recovery, exact-condition delivery, 48-hour boundaries,
-  private expired views, stale purchases, repost replay, search before pagination,
-  exact-item returns, return restart recovery, post-expiry settlement and sale-fee rounding.
-- `... fengari tests/wallet-market-client.lua`: 34 checks using production client,
+  offline reservation recovery, exact-condition delivery, 7-day publication and repost
+  deadlines, expiry boundaries, private expired views, stale purchases, repost
+  replay, search before pagination, exact-item returns, return restart recovery,
+  post-expiry settlement and sale-fee rounding.
+- `... fengari tests/wallet-market-client.lua`: 57 checks passed using production client,
   dialogue, portrait and panel code with native widget stubs. Covers handshake
   delay, local-player correlation, spoken codes/sectors, reply-only acknowledgments,
   page chatter limits, same-token retries, silent status checks, one ETA per job,
   quantity controls, six buttons, frame caching, measurement-free rendering,
   menu actions, filtered pagination, recovery/repost commands and stable retries.
-- Existing wallet/courier/radio tests and the expanded B42 catalog validator
-  remain required. Tests do not invoke the live backend.
+- `py -3 tests/wallet-translations.py` passed catalog, fallback, placeholder,
+  skin, key and UTF-8 checks. Tests use mocked engine and backend boundaries.
 - Java: 105 production API/Kahlua/loopback HTTP checks passed; exact-JAR BuildOnly
   passed with 371 sources / 1062 classes, artifact directory
   `42.22.2/artifacts/market-radio-2026-11-11` in the Java patches repository.

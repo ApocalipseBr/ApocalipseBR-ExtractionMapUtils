@@ -52,6 +52,10 @@ temporary population area on cell completion, cancellation and failure. It has a
 15-second renewal limit as an additional stale-request safeguard. No fake players,
 ImportantAreaManager entries, worker threads or permanent pins are created.
 Completed, cancelled and failed jobs stop making loading requests.
+When the perimeter is enabled, the job registers its `LoadGridsquare` callback
+before requesting the first cell and unregisters the same Lua function on
+completion, cancellation or failure. Skipped jobs never register it. Ongoing
+perimeter reconciliation uses the [periodic scans](lobby-perimeter.md).
 
 ## Logs and failure handling
 
@@ -126,3 +130,9 @@ floors and tiles beyond the margin survive, and invalid values fail before loadi
 Locale checks verify the option's integer type, 0..100 range and default 10.
 Production bridge fixture and exact-game-JAR compilation also passed (see patch
 guide). No live server was started or installed patch deployed for this change.
+
+On 2026-11-22, `tests/lobby-cleanup.lua` and `tests/lobby-perimeter.lua` passed
+with Fengari. They cover one callback registration during cleanup, removal on
+completion, cancellation and failure, no registration when disabled, and
+periodic fence repair with no square listener. The live-server timing impact
+still needs measurement.

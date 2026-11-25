@@ -37,6 +37,7 @@ local function geometry()
 end
 
 local function finish(status)
+    if run.onSquareLoaded then Events.LoadGridsquare.Remove(run.onSquareLoaded) end
     local released, releaseError = pcall(ApocBRLobbyStreaming.releasePopulation)
     if not released then status = "FAILED: population release: " .. tostring(releaseError) end
     log(status .. ": chunks=" .. run.done .. "/" .. run.total .. ", removed=" .. run.removed
@@ -74,6 +75,10 @@ function Cleanup.start()
     run = { bounds = bounds, cells = cells, index = 1, chunkIndex = 1,
         total = total, done = 0, removed = 0, loadedTiles = 0, missingTiles = 0,
         started = now, nextLog = now + LOG_MS }
+    if Utils.Lobby and Utils.lobbyRuleEnabled("LobbyFenceEnabled") then
+        run.onSquareLoaded = Utils.Lobby.onSquareLoaded
+        Events.LoadGridsquare.Add(run.onSquareLoaded)
+    end
     log("START: bounds=" .. bounds.x1 .. "," .. bounds.y1 .. ".." .. bounds.x2 .. "," .. bounds.y2
         .. ", z=" .. MIN_CLEANUP_Z .. ".." .. MAX_CLEANUP_Z .. ", margin=" .. bounds.margin .. ", cells=" .. #cells .. ", chunks=" .. total
         .. "; populationActivation=true; loading one 64x64 server cell at a time")

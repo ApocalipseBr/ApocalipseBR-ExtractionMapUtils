@@ -36,7 +36,7 @@ Use the intended server setting
 that disables sledgehammers. These flags address normal gameplay; administrative
 deletion, fire, vehicle physics, animal damage, other mods and modified clients
 are not a universal indestructibility guarantee. Missing assets are repaired
-when the square loads or during the slow scan.
+when the square loads during startup cleanup or during the periodic scan.
 
 Version 0.2.2 additionally blocks world-object scrap/disassembly and thumpable
 dismantling on every interior tile and the east/south perimeter squares at the
@@ -164,18 +164,22 @@ world in one startup loop. Each tick processes at most four edges, checking the
 elapsed time between operations. One native operation cannot be preempted, so
 the two-millisecond budget is not a hard bound on an individual engine call.
 Unloaded/null squares are skipped once, without repeatedly retrying them each
-tick. `LoadGridsquare` only queues matching edges; placement happens later.
-Repeated callbacks are deduplicated, no square references are retained, and the
-finite plan is capped at 4096 edges. A mostly unloaded default lobby costs 286
-lookups per minute plus six exit lookups per two seconds, spread across ticks.
-Errors log once per failing edge until it succeeds and retry only on a later
-load/check/scan. Intact objects are not continually recreated or rebroadcast.
+tick. [Startup zombie cleanup](lobby-zombie-cleanup.md) temporarily registers
+the perimeter's `LoadGridsquare` callback while it force-loads cells. The callback
+queues matching edges by coordinate and deduplicates repeated notifications.
+After it is removed, newly available squares are reconciled by the next periodic
+scan (60 seconds by default, plus time to drain the queue), or the next exit
+check (2 seconds by default) for selected exits. The same scans cover startups
+with cleanup disabled. The finite plan is capped at 4096 edges. A mostly unloaded
+default lobby costs 286 lookups per minute plus six exit lookups per two seconds,
+spread across ticks. Errors log once per failing edge until it succeeds. Intact
+objects are not continually recreated or rebroadcast.
 
 The known default 0.2.0 perimeter upgrades automatically at identical bounds
 and exit count. Its saved door positions become exit positions and its release
-latch is preserved. Owned old walls/doors are replaced as their squares load,
-using the same tick budgets. Legacy ownership signatures remain saved so an old
-chunk loaded after another restart is still repaired. A released old save has
+latch is preserved. Owned old walls/doors are replaced when their loaded squares
+are reconciled, using the same tick budgets. Legacy ownership signatures remain
+saved so an old chunk loaded after another restart is still repaired. A released old save has
 its old doors removed rather than replaced. Unrelated map objects are preserved.
 No world reset or manual cleanup is needed for this upgrade.
 
@@ -189,8 +193,9 @@ Disabling this feature stops its work; it does not delete existing assets.
 
 ## Engine paths and persistence
 
-- Server hooks: `OnServerStarted`, `LoadGridsquare`, and `OnTick`. The dedicated
-  server updates `IngameState`, which dispatches `OnTick`.
+- The perimeter uses `OnServerStarted` and `OnTick`, plus `LoadGridsquare` during
+  startup cleanup. The dedicated server updates `IngameState`, which dispatches
+  `OnTick`.
 - `IsoThumpable` is exposed by `LuaManager`; its constructors accept the square,
   sprite names, orientation and Lua table. Save/load persist the open state,
   flags, health, sprites and mod data (`IsoThumpable.java:438-640`).
